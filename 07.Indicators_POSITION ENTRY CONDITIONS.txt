@@ -1,4 +1,4 @@
-============================================
+// ============================================
 // 🚀 POSITION ENTRY Filters
 // ============================================
 valid_open_long =
@@ -9,7 +9,10 @@ valid_open_long =
      (not ADX_on   or ADX_L) and
      (not OBV_on   or OBV_L) and
      (not MACD_on  or MACD_L) and
-     (not Limit_on or Limit_L)
+     (not Limit_on or Limit_L) and
+     (not EMA_on   or EMA_L) and     
+     (not VWAP_on or VWAP_L) and
+     (not  Volatility_on or  Volatility)
 
 valid_open_short =
      active_short and
@@ -19,7 +22,10 @@ valid_open_short =
      (not ADX_on   or ADX_S) and
      (not OBV_on   or OBV_S) and
      (not MACD_on  or MACD_S) and
-     (not Limit_on or Limit_S)
+     (not Limit_on or Limit_S) and
+     (not EMA_on   or EMA_S) and       
+     (not VWAP_on or VWAP_S) and
+     (not  Volatility_on or  Volatility)
 
 // ============================================
 // 📍 ENTRY POSITION MANAGEMENT
@@ -29,3 +35,4 @@ if valid_open_long
 
 if valid_open_short
     strategy.entry("Short", strategy.short, comment="E🔵S")
+
