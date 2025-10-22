@@ -1,0 +1,40 @@
+// ============================================
+// 📍 EXIT POSITION MANAGEMENT
+// ============================================
+// EXIT ON OPPOSITE SIGNAL
+// 포지션 보유 여부 확인
+has_long  = strategy.position_size > 0
+has_short = strategy.position_size < 0
+
+// 롱 포지션 조기 청산 조건 (논리식으로 통합)
+should_exit_long = has_long and (
+     (exit_on_st_flip and ST_S) or
+     (exit_on_di_flip and DI_S) or
+     (exit_on_macd_flip and MACD_S)
+     )
+
+// 숏 포지션 조기 청산 조건 (논리식으로 통합)
+should_exit_short = has_short and (
+     (exit_on_st_flip and ST_L) or
+     (exit_on_di_flip and DI_L) or
+     (exit_on_macd_flip and MACD_L)
+     )
+
+// TP/SL 및 조기 청산 로직
+if has_long
+    if should_exit_long
+        strategy.close(id="Long", comment="Exit🔄")
+    else
+        strategy.exit(id="Exit Long", from_entry="Long",
+         limit=use_tp ? long_tp_price : na,
+         stop=use_sl ? long_sl_price : na,
+         comment_profit="T👜P", comment_loss="L❌SL")
+
+if has_short
+    if should_exit_short
+        strategy.close(id="Short", comment="Exit🔄")
+    else
+        strategy.exit(id="Exit Short", from_entry="Short",
+         limit=use_tp ? short_tp_price : na,
+         stop=use_sl ? short_sl_price : na,
+         comment_profit="T🧰P", comment_loss="S❌SL")

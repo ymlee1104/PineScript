@@ -1,0 +1,32 @@
+// ============================================
+// 📍 POSITION SELECTIONS / SHOW PLOT LINES 
+// ============================================
+active_long = input.bool(true, 'Active Long', inline='act', group='POSITION SELECTIONS / SHOW PLOT LINES')
+active_short = input.bool(true, 'Active Short', inline='act', group='POSITION SELECTIONS / SHOW PLOT LINES')
+show_tp_sl_lines = input.bool(false, 'TP/SL 라인', inline='act', group='POSITION SELECTIONS / SHOW PLOT LINES')
+show_vwap_line = input.bool(true, 'VWAP 라인', inline='act', group='POSITION SELECTIONS / SHOW PLOT LINES')
+
+// ============================================
+// 💰 POSITION ENTRY FILTER ON/OFF
+// ============================================
+ST_on = input.bool(true, 'SuperTrendLine', inline='SW', group='Switching Position_Entry Filters')
+ADX_on = input.bool(true, 'ADX', inline='SW', group='Switching Position_Entry Filters')
+OBV_on = input.bool(true, 'OBV', inline='SW', group='Switching Position_Entry Filters')
+MACD_on = input.bool(true, 'MACD', inline='SW', group='Switching Position_Entry Filters')
+DI_on = input.bool(true, 'DI방향', inline='SW', group='Switching Position_Entry Filters')
+Limit_on = input.bool(true, 'DI이격도', inline='SW', group='Switching Position_Entry Filters')
+
+// ============================================
+// 💰 POSITION EXIT FILTER ON/OFF
+// ============================================
+exit_on_opposite = input.bool(true, '체크된 신호반전 시 청산 ⇛', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_st_flip = input.bool(false, 'SuperTrend', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_di_flip = input.bool(false, 'DI방향', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_macd_flip = input.bool(false, 'MACD', inline='exit2', group='Switching Position_EXIT Filters')
+
+// VWAP (Volume Weighted Average Price
+vwapValue = ta.vwap(hlc3)
+VWAP_L = close > vwapValue
+VWAP_S = close < vwapValue
+
+// 🔴🟢🔵🟡🟣👜🧰✖️❌🚫🟥🟧🟩🟦🟪🟨♦️🔶🔷❎🔼🔽☑️📈📉📊🛞🌺🌸☘️🪂☢️♻️🔱🛝🎡🎢🧶🧿🎸🖊️🖋️🖌️🖍️📌📍✂️

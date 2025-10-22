@@ -1,0 +1,32 @@
+// ============================================
+// 🎨 VISUAL COMPONENTS
+// ============================================
+plot(show_vwap_line ? vwapValue : na, "VWAP", color=color.new(color.white, 0), linewidth = 2)
+
+// ============================================
+// 💰 EMA TREND LINE
+// ============================================
+pfast=plot(show_ema_line ? ema_fast : na, title="EMA Fast Line", color=color.new(color.orange, 0), linewidth = 2)
+pslow= plot(show_ema_line ? ema_slow : na, title="EMA Fast Line", color=color.new(color.blue, 0), linewidth = 4)
+fill(pfast, pslow, color = EMA_L ? color.new(color.teal, 75) : EMA_S ? color.new(color.fuchsia, 75) : color.new(color.yellow, 30))
+
+// plotcandle 함수를 사용하여 Body, Wick, Border 색상을 동일하게 지정 // 차트의 원래 캔들은 체크해제해서 비활성화 할 것
+bar_color = inDate ? (DI_L ? color.new(color.lime, 15) : DI_S ? color.new(color.red, 15) : high_volatility ? color.new(color.white, 0) : na) : na
+plotcandle(open, high, low, close, color = bar_color, wickcolor = bar_color, bordercolor = bar_color)
+
+// "Percentile SuperTrend Line 그리기 및 채우기
+st_color = inDate ? (ST_L ? color.new(color.rgb(45, 162, 252), 0) : ST_S ? color.new(color.purple, 0) : color.yellow) : na
+plot_x = plot(show_st_line ? x : na, "Percentile SuperTrend", color=st_color, linewidth=4)
+
+//
+fill_color = inDate ? (valid_open_long ? color.new(color.rgb(45, 162, 252), 85) : valid_open_short ? color.new(#eb05f3, 85) : color.new(color.yellow, 60)) : na
+fill(plot_x, plot(ohlc4, 'Candle Line', color=color.new(color.gray, 99), linewidth=1), color=fill_color)
+
+plot(show_tp_line and has_long and use_tp ? long_tp_price : na, "Long TP", color=color.new(color.green, 0), style=plot.style_linebr, linewidth=1, offset=1)
+plot(show_tp_line and has_short and use_tp ? short_tp_price : na, "Short TP", color=color.new(color.orange, 0), style=plot.style_linebr, linewidth=1, offset=1)
+plot(show_sl_line and has_long and use_sl ? long_sl_price : na, "Long SL", color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=1, offset=1)
+plot(show_sl_line and has_short and use_sl ? short_sl_price : na, "Short SL", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=1, offset=1)
+series = strategy.opentrades.entry_price(strategy.opentrades - 1)
+plot(show_position_line ? series : na, title = 'Position', color=strategy.position_size > 0 ? color.new(#f4f801, 0) : strategy.position_size < 0 ? color.new(#fcba05, 0): na, style = plot.style_cross, linewidth = 2)
+
+

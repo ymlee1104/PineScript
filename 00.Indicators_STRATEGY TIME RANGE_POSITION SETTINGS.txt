@@ -1,0 +1,18 @@
+//@version=5
+strategy("🧰Percentile_SuperTrend_OBV&DI", overlay=true,
+     initial_capital = 80, currency = 'USDT', default_qty_type = strategy.percent_of_equity, default_qty_value = 50, commission_value = 0.05,
+     backtest_fill_limits_assumption = 0, slippage = 0, margin_long = 0, margin_short = 0, pyramiding = 0, calc_on_order_fills = false, calc_on_every_tick = false, use_bar_magnifier = true, process_orders_on_close = true)
+
+// ============================================
+// ⏰ STRATEGY TIME RANGE
+// ============================================
+start_time = input.time(timestamp("2025-01-01 00:00 +0900"), 'Start Time', inline='time', group='Strategy Time range', tooltip='최소 2-3년 이상의 데이터로 테스트 권장')
+inDate = time >= start_time
+
+// ============================================
+// 📍 POSITION SELECTIONS / SHOW PLOT LINES 
+// ============================================
+active_long = input.bool(true, 'Active Long', inline='act', group='POSITION SELECTIONS / SHOW PLOT LINES')
+active_short = input.bool(true, 'Active Short', inline='act', group='POSITION SELECTIONS / SHOW PLOT LINES')
+show_tp_sl_lines = input.bool(false, 'TP/SL 라인', inline='act', group='POSITION SELECTIONS / SHOW PLOT LINES')
+show_vwap_line = input.bool(true, 'VWAP 라인', inline='act', group='POSITION SELECTIONS / SHOW PLOT LINES')

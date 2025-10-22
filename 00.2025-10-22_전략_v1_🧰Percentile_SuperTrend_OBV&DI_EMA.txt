@@ -1,0 +1,489 @@
+//@version=5
+strategy("👜Percentile_SuperTrend_OBV&DI&EMA", overlay=true,
+     initial_capital = 75, currency = 'USDT', default_qty_type = strategy.percent_of_equity, default_qty_value = 49, commission_value = 0.05,
+     backtest_fill_limits_assumption = 0, slippage = 0, margin_long = 0, margin_short = 0, pyramiding = 0, calc_on_order_fills = false, calc_on_every_tick = false, use_bar_magnifier = true, process_orders_on_close = true)
+
+// ============================================
+// ⏰ STRATEGY TIME RANGE
+// ============================================
+start_time = input.time(timestamp("2025-01-01 00:00 +0900"), 'Start', inline='ti', group='Time range/POSITION SELECTIONS')
+inDate = time >= start_time
+
+// ============================================
+// 📍 POSITION SELECTIONS
+// ============================================
+active_long = input.bool(true, 'ActLong', inline='ti', group='Time range/POSITION SELECTIONS')
+active_short = input.bool(true, 'ActShort', inline='ti', group='Time range/POSITION SELECTIONS')
+
+// ============================================
+// 📍 SHOW PLOT LINES 
+// ============================================
+show_st_line = input.bool(true, 'SuperTrend', inline='sh', group='SHOW PLOT LINES')
+show_ema_line = input.bool(false, 'EMA', inline='sh', group='SHOW PLOT LINES')
+show_position_line = input.bool(true, 'Position', inline='sh', group='SHOW PLOT LINES')
+show_tp_line = input.bool(true, 'TP', inline='sh', group='SHOW PLOT LINES')
+show_sl_line = input.bool(false, 'SL', inline='sh', group='SHOW PLOT LINES')
+show_vwap_line = input.bool(false, 'VWAP', inline='sh', group='SHOW PLOT LINES')
+
+// ============================================
+// 💰 POSITION ENTRY FILTER ON/OFF
+// ============================================
+ST_on = input.bool(true, 'ST', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+ADX_on = input.bool(true, 'ADX', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+OBV_on = input.bool(true, 'OBV', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+MACD_on = input.bool(true, 'MACD', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+DI_on = input.bool(true, 'DI 방향성', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+Limit_on = input.bool(true, 'DI 이격도', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+EMA_on = input.bool(true, 'EMA', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+Volatility_on = input.bool(true, 'Volatility', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+VWAP_on = input.bool(false, 'VWAP', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/EMA/Volatility/VWMA')
+
+// ============================================
+// 💰 POSITION EXIT FILTER ON/OFF
+// ============================================
+exit_on_opposite = input.bool(true, '체크된 신호반전 시 청산 ⇛', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_st_flip = input.bool(false, 'SuperTrend', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_di_flip = input.bool(false, 'DI방향', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_macd_flip = input.bool(false, 'MACD', inline='exit2', group='Switching Position_EXIT Filters')
+
+// VWAP (Volume Weighted Average Price
+vwapValue = ta.vwap(hlc3)
+VWAP_L = close > vwapValue
+VWAP_S = close < vwapValue
+
+// ============================================
+// 🟢 DI( Disparity Index) / ADX TREND FILTERS
+// ============================================
+use_di_filter = input.bool(true, '+DI/-DI방향|', inline='di', group='ENTRY Filters : DI /ADX / OBV / MACD', tooltip='ADX뿐만 아니라 +DI/-DI 방향성도 확인')
+length_di = input.int(33, title = 'DI 길이', minval = 1, inline = 'di', group = 'ENTRY Filters : DI /ADX / OBV / MACD')
+src_di = input.source(close, title = 'DI Src', inline = 'di', group = 'ENTRY Filters : DI /ADX / OBV / MACD')
+
+dmiLength = input.int(15, title="DMI DI", minval=1, inline='adx', group='ENTRY Filters : DI /ADX / OBV / MACD')
+adxSmoothing = input.int(22, title="ADX평활", minval=1, inline='adx', group='ENTRY Filters : DI /ADX / OBV / MACD')
+adxThreshold = input.float(22.0, title="ADX임계", minval=10, step=0.1, inline='adx', group='ENTRY Filters : DI /ADX / OBV / MACD')
+
+// ============================================
+// 🟢 On Balance Volume Oscillator
+// ============================================
+length_obv = input.int(12, title="OBV EMA", inline='obv', group='ENTRY Filters : DI /ADX / OBV / MACD')
+Baseline_long = input.int(0, title="기준선(롱)", minval=0, step=1, inline='obv', group='ENTRY Filters : DI /ADX / OBV / MACD') * 10000
+Baseline_short = input.int(2, title="(숏)", minval=0, step=1, inline='obv', group='ENTRY Filters : DI /ADX / OBV / MACD') * -10000
+
+// ============================================
+// 📈 MACD DEMA SETTINGS
+// ============================================
+fastLen_macd = input.int(21, title='MACD Fast length', inline='macd', group='ENTRY Filters : DI /ADX / OBV / MACD')
+slowLen_macd = input.int(93, title='MACD Slow length', inline='macd', group='ENTRY Filters : DI /ADX / OBV / MACD')
+
+// ============================================
+// 🎯 진입 이격도 제한 / Advanced Disparity(이격도) Index
+// ============================================
+emaPeriod = input.int(15, title="EMA Period", inline = 'di1', group='Entry Limit Filter : by Advanced Disparity State', tooltip='Disparity(이격도) 대비 가격이 너무 높으면 진입 차단')
+lookbackPeriod_ma = input.int(14, title="Lookback Period", inline = 'di1', group='Entry Limit Filter : by Advanced Disparity State')
+overBought_ma = input.float(93, title="Overbought Level", inline = 'di2', group='Entry Limit Filter : by Advanced Disparity State')
+overSold_ma = input.float(10, title="Oversold Level", inline = 'di2', group='Entry Limit Filter : by Advanced Disparity State', tooltip='70~100 이상 롱 포지션 진입 차단 / 30~0 이하 숏 포지션 진입 차단')
+smoothingPeriod_ma = input.int(9, title="Smoothing Period", inline = 'di3', group='Entry Limit Filter : by Advanced Disparity State')
+smoothingType_ma = input.string("EMA", title="Smoothing Type", options=["EMA", "SMA"], inline = 'di3', group='Entry Limit Filter : by Advanced Disparity State')
+
+// ============================================
+// 📊 SUPERTREND SETTINGS/백분위수(Percentile)
+// ============================================
+Percent25 = input.int(25, "25 Percent length", inline='%', group="25-75 Percentile SuperTrend/백분위수(Percentile)")
+Percent75 = input.int(75, "75 Percent length", inline='%', group="25-75 Percentile SuperTrend/백분위수(Percentile)")
+subject_per = input.int(125, "Supertrend length", minval=2, inline='sp', group="25-75 Percentile SuperTrend/백분위수(Percentile)") //129
+mult_per = input.float(1.74, "Multiplier", step=0.01, inline='sp', group="25-75 Percentile SuperTrend/백분위수(Percentile)") //1.75
+slen_per = input.int(3, "Percentile length", inline='sp', group="25-75 Percentile SuperTrend/백분위수(Percentile)")
+src_2575 = input.source(close, "Median smoothing source", inline='sp', group="25-75 Percentile SuperTrend/백분위수(Percentile)")
+
+// ============================================
+// 💰 TAKE PROFIT & STOP LOSS SETTINGS
+// ============================================
+use_tp = input.bool(true, 'TP 사용', inline='tp', group='Take Profit / Stop Loss')
+long_tp_percent = input.float(9.3, 'Long TP(%)', minval=0.1, step=0.1, inline='tp', group='Take Profit / Stop Loss') //9.9
+short_tp_percent = input.float(10.2, 'Short TP(%)', minval=0.1, step=0.1, inline='tp', group='Take Profit / Stop Loss')
+use_sl = input.bool(true, 'SL 사용', inline='sl', group='Take Profit / Stop Loss')
+long_sl_percent = input.float(9.3, 'Long SL(%)', minval=0.1, step=0.1, inline='sl', group='Take Profit / Stop Loss') //9.3
+short_sl_percent = input.float(12.1, 'Short SL(%)', minval=0.1, step=0.1, inline='sl', group='Take Profit / Stop Loss') //13.9
+
+// ============================================
+// 💰 EMA TREND LINE
+// ============================================
+src_ema = input(close, title="", inline = 'ema', group = 'EMA TREND LINE/Volatility Limit Setting')
+emalen_fast = input.int(8, minval=1, title="Fast Length", inline = 'ema', group = 'EMA TREND LINE/Volatility Limit Setting')
+emalen_slow = input.int(13, minval=1, title="Slow Length", inline = 'ema', group = 'EMA TREND LINE/Volatility Limit Setting')
+ema_fast = ta.ema(src_ema, emalen_fast)
+ema_slow = ta.ema(src_ema, emalen_slow)
+EMA_L = ema_fast > ema_slow and ema_fast > ema_fast[1] 
+EMA_S = ema_fast < ema_slow and ema_slow[1] > ema_slow 
+
+// ============================================
+// 💰 Volatility Limit Setting
+// ============================================
+int rangeLookback = input.int(35, title=" Volatility Length", inline = 'vltt', group = 'EMA TREND LINE/Volatility Limit Setting')
+float minRangePercent = input.float(3.3, title=" Volatility Limit(%)", minval=0.1, step=0.1, inline = 'vltt', group = 'EMA TREND LINE/Volatility Limit Setting')/100
+float highestHigh_v = ta.highest(high, rangeLookback)
+float lowestLow_v = ta.lowest(low, rangeLookback)
+float rangePercent = (highestHigh_v-lowestLow_v)/close
+bool Volatility = rangePercent > minRangePercent
+
+// ============================================
+// 💰 DI( Disparity Index)
+// ============================================
+sma_di = ta.sma(src_di, length_di)
+di = sma_di > 0 ? 100 * (src_di - sma_di) / sma_di : 0
+DI_L = di >= 0
+DI_S = di < 0
+
+// ============================================
+// 📊 ADX CALCULATION
+// ============================================
+[plusDI, minusDI, adx] = ta.dmi(dmiLength, adxSmoothing)
+ADX_L = use_di_filter ? (adx > adxThreshold and plusDI > minusDI) : adx > adxThreshold
+ADX_S = use_di_filter ? (adx > adxThreshold and minusDI > plusDI) : adx > adxThreshold
+
+// ============================================
+// 🟢 On Balance Volume Oscillator (계산부하 최적화 버전)
+// ============================================
+float obv_val = ta.obv
+float obv_osc = obv_val - ta.ema(obv_val, length_obv)
+bool OBV_L = obv_osc > Baseline_long
+bool OBV_S = obv_osc < Baseline_short
+
+// ============================================
+// 📉 MACD DEMA CALCULATION
+// ============================================
+dema(source, length) =>
+    ema1 = ta.ema(source, length)
+    ema2 = ta.ema(ema1, length)
+    2 * ema1 - ema2
+
+macdDemaLine = dema(close, fastLen_macd) - dema(close, slowLen_macd)
+MACD_L = macdDemaLine > macdDemaLine[1]
+MACD_S = macdDemaLine < macdDemaLine[1]
+
+// ============================================
+// 🔧 SUPERTREND FUNCTION/(Percentile:백분위수)
+// ============================================
+Percentile_SuperTrend_func(mult, atrPeriod, src_long, src_short) =>
+    atr = ta.atr(atrPeriod)
+    upper = src_long + mult * atr
+    lower = src_short - mult * atr
+    pl = nz(lower[1], lower)
+    pu = nz(upper[1], upper)
+    lower := lower > pl or close[1] < pl ? lower : pl
+    upper := upper < pu or close[1] > pu ? upper : pu
+    
+    int dist = 0
+    float st = na
+    pt = nz(st[1], st)
+    
+    if close > upper[1]
+        dist := 1
+    else if close < lower[1]
+        dist := -1
+    else
+        dist := nz(dist[1], 0)
+
+    st := dist == 1 ? lower : upper
+    [st, dist]
+
+// ============================================
+// 🎯 SUPERTREND CALCULATION/(Percentile:백분위수)
+// ============================================
+smooth_lower = ta.percentile_nearest_rank(src_2575, slen_per, Percent25)
+smooth_upper = ta.percentile_nearest_rank(src_2575, slen_per, Percent75)
+[x, dist] = Percentile_SuperTrend_func(mult_per, subject_per, smooth_upper, smooth_lower)
+ST_L = dist == 1
+ST_S = dist == -1
+
+// ============================================
+// 🎯 Advanced Disparity(이격도) Index
+// ============================================
+price = close
+emaValue = ta.ema(price, emaPeriod)
+disparityIndex = (price - emaValue) / emaValue * 100
+highestHigh = ta.highest(disparityIndex, lookbackPeriod_ma)
+lowestLow = ta.lowest(disparityIndex, lookbackPeriod_ma)
+range_ = highestHigh - lowestLow
+scaledDisparityIndex = nz(range_) == 0 ? 0 : (disparityIndex - lowestLow) / range_ * 100
+smoothedDisparityIndex = switch smoothingType_ma
+    "EMA" => ta.ema(scaledDisparityIndex, smoothingPeriod_ma)
+    "SMA" => ta.sma(scaledDisparityIndex, smoothingPeriod_ma)
+    => na
+Limit_L = (smoothedDisparityIndex < overBought_ma)
+Limit_S = (smoothedDisparityIndex > overSold_ma)
+high_volatility = (smoothedDisparityIndex > overBought_ma) or (smoothedDisparityIndex < overSold_ma)
+
+// ============================================
+// 💰 TAKE PROFIT & STOP LOSS PRICES
+// ============================================
+long_tp_price = strategy.position_avg_price * (1 + long_tp_percent / 100)
+short_tp_price = strategy.position_avg_price * (1 - short_tp_percent / 100)
+long_sl_price = strategy.position_avg_price * (1 - long_sl_percent / 100)
+short_sl_price = strategy.position_avg_price * (1 + short_sl_percent / 100)
+
+// ============================================
+// 🚀 POSITION ENTRY Filters
+// ============================================
+valid_open_long =
+     active_long and
+     inDate and
+     (not ST_on    or ST_L) and
+     (not DI_on    or DI_L) and
+     (not ADX_on   or ADX_L) and
+     (not OBV_on   or OBV_L) and
+     (not MACD_on  or MACD_L) and
+     (not Limit_on or Limit_L) and
+     (not EMA_on   or EMA_L) and     
+     (not VWAP_on or VWAP_L) and
+     (not  Volatility_on or  Volatility)
+
+valid_open_short =
+     active_short and
+     inDate and
+     (not ST_on    or ST_S) and
+     (not DI_on    or DI_S) and
+     (not ADX_on   or ADX_S) and
+     (not OBV_on   or OBV_S) and
+     (not MACD_on  or MACD_S) and
+     (not Limit_on or Limit_S) and
+     (not EMA_on   or EMA_S) and       
+     (not VWAP_on or VWAP_S) and
+     (not  Volatility_on or  Volatility)
+
+// ============================================
+// 📍 ENTRY POSITION MANAGEMENT
+// ============================================
+if valid_open_long
+    strategy.entry("Long", strategy.long, comment="E🟢L")
+
+if valid_open_short
+    strategy.entry("Short", strategy.short, comment="E🔵S")
+
+// ============================================
+// 📍 EXIT POSITION MANAGEMENT
+// ============================================
+// EXIT ON OPPOSITE SIGNAL / 포지션 보유 여부 확인
+has_long  = strategy.position_size > 0
+has_short = strategy.position_size < 0
+
+// 롱 포지션 조기 청산 조건 (논리식으로 통합)
+should_exit_long = has_long and exit_on_opposite and (
+     (exit_on_st_flip and ST_S) or
+     (exit_on_di_flip and DI_S) or
+     (exit_on_macd_flip and MACD_S)
+     )
+
+// 숏 포지션 조기 청산 조건 (논리식으로 통합)
+should_exit_short = has_short and exit_on_opposite and (
+     (exit_on_st_flip and ST_L) or
+     (exit_on_di_flip and DI_L) or
+     (exit_on_macd_flip and MACD_L)
+     )
+
+// TP/SL 및 조기 청산 로직
+if has_long
+    if should_exit_long
+        strategy.close(id="Long", comment="Exit🔄")
+    else
+        strategy.exit(id="Exit Long", from_entry="Long",
+         limit=use_tp ? long_tp_price : na,
+         stop=use_sl ? long_sl_price : na,
+         comment_profit="T👜P", comment_loss="L❌SL")
+
+if has_short
+    if should_exit_short
+        strategy.close(id="Short", comment="Exit🔄")
+    else
+        strategy.exit(id="Exit Short", from_entry="Short",
+         limit=use_tp ? short_tp_price : na,
+         stop=use_sl ? short_sl_price : na,
+         comment_profit="T🧰P", comment_loss="S❌SL")
+
+
+// ============================================
+// 🎨 VISUAL COMPONENTS
+// ============================================
+plot(show_vwap_line ? vwapValue : na, "VWAP", color=color.new(color.white, 0), linewidth = 2)
+
+// ============================================
+// 💰 EMA TREND LINE
+// ============================================
+pfast=plot(show_ema_line ? ema_fast : na, title="EMA Fast Line", color=color.new(color.orange, 0), linewidth = 2)
+pslow= plot(show_ema_line ? ema_slow : na, title="EMA Fast Line", color=color.new(color.blue, 0), linewidth = 4)
+fill(pfast, pslow, color = EMA_L ? color.new(color.teal, 75) : EMA_S ? color.new(color.fuchsia, 75) : color.new(color.yellow, 30))
+
+// plotcandle 함수를 사용하여 Body, Wick, Border 색상을 동일하게 지정 // 차트의 원래 캔들은 체크해제해서 비활성화 할 것
+bar_color = inDate ? (DI_L ? color.new(color.lime, 15) : DI_S ? color.new(color.red, 15) : high_volatility ? color.new(color.white, 0) : na) : na
+plotcandle(open, high, low, close, color = bar_color, wickcolor = bar_color, bordercolor = bar_color)
+
+// "Percentile SuperTrend Line 그리기 및 채우기
+st_color = inDate ? (ST_L ? color.new(color.rgb(45, 162, 252), 0) : ST_S ? color.new(color.purple, 0) : color.yellow) : na
+plot_x = plot(show_st_line ? x : na, "Percentile SuperTrend", color=st_color, linewidth=4)
+
+//
+fill_color = inDate ? (valid_open_long ? color.new(color.rgb(45, 162, 252), 85) : valid_open_short ? color.new(#eb05f3, 85) : color.new(color.yellow, 60)) : na
+fill(plot_x, plot(ohlc4, 'Candle Line', color=color.new(color.gray, 99), linewidth=1), color=fill_color)
+
+plot(show_tp_line and has_long and use_tp ? long_tp_price : na, "Long TP", color=color.new(color.green, 0), style=plot.style_linebr, linewidth=1, offset=1)
+plot(show_tp_line and has_short and use_tp ? short_tp_price : na, "Short TP", color=color.new(color.orange, 0), style=plot.style_linebr, linewidth=1, offset=1)
+plot(show_sl_line and has_long and use_sl ? long_sl_price : na, "Long SL", color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=1, offset=1)
+plot(show_sl_line and has_short and use_sl ? short_sl_price : na, "Short SL", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=1, offset=1)
+series = strategy.opentrades.entry_price(strategy.opentrades - 1)
+plot(show_position_line ? series : na, title = 'Position', color=strategy.position_size > 0 ? color.new(#f4f801, 0) : strategy.position_size < 0 ? color.new(#fcba05, 0): na, style = plot.style_cross, linewidth = 2)
+
+
+
+// ============================================
+// 📊 TWO TABLES COMMON INPUT
+// ============================================
+bg_transp = input.int(85, '배경 투명도⇅', minval=0, maxval=100, inline='perf0', group='Performance Table')
+text_transp = input.int(45, 'TEXT 투명도⇅', minval=0, maxval=100, inline='perf0', group='Performance Table')
+
+// ============================================
+// 📊 PERFORMANCE TABLE
+// ============================================
+show_performance = input.bool(true, '이익률 표시✔,', inline='perf1', group='Performance Table')
+perf_position = input.string('bottom_left', '표시위치🚃', options=['middle_right', 'bottom_left', 'bottom_right', 'bottom_center', 'top_left', 'top_right', 'top_center'], inline='perf1', group='Performance Table')
+years_qty = input.int(1, '표시년수⇅', minval=1, inline='perf1', group='Performance Table') - 1
+
+// --- 변수 선언 ---
+var color_profit = color.new(color.black, bg_transp)
+var float cur_month_pnl = 0.0
+var float[] month_pnl = array.new<float>()
+var int[] month_time = array.new<int>()
+var float[] year_pnl = array.new<float>()
+var int[] year_time = array.new<int>()
+var int max_array_size = 200
+
+// --- 계산부 ---
+float bar_pnl = strategy.equity != strategy.equity[1] and nz(strategy.equity[1]) > 0 ? (strategy.equity / strategy.equity[1] - 1) : 0.0
+
+if show_performance
+    bool new_month = month(time) != month(time[1])
+    bool new_year = year(time) != year(time[1])
+
+    cur_month_pnl := new_month ? 0.0 : (1 + nz(cur_month_pnl[1])) * (1 + bar_pnl) - 1
+
+    if new_month
+        array.push(month_pnl, cur_month_pnl[1])
+        array.push(month_time, time[1])
+        if array.size(month_pnl) > max_array_size
+            array.shift(month_pnl)
+            array.shift(month_time)
+
+    if new_year
+        float cumulative_pnl = strategy.netprofit[1] / strategy.initial_capital
+        array.push(year_pnl, cumulative_pnl)
+        array.push(year_time, time[1])
+        if array.size(year_pnl) > max_array_size
+            array.shift(year_pnl)
+            array.shift(year_time)
+
+// --- 테이블 그리기 ---
+if show_performance and barstate.islastconfirmedhistory
+    float final_cumulative_pnl = strategy.netprofit / strategy.initial_capital
+    
+    float[] final_year_pnl = array.copy(year_pnl)
+    int[] final_year_time = array.copy(year_time)
+    array.push(final_year_pnl, final_cumulative_pnl)
+    array.push(final_year_time, time)
+    
+    float[] final_month_pnl = array.copy(month_pnl)
+    int[] final_month_time = array.copy(month_time)
+    array.push(final_month_pnl, cur_month_pnl)
+    array.push(final_month_time, time)
+
+    year_size = array.size(final_year_pnl)
+    if year_size > 0
+        year_threshold = year(time) - years_qty
+        int displayed_rows = 0
+        for i = 0 to year_size - 1
+            if year(array.get(final_year_time, i)) >= year_threshold
+                displayed_rows += 1
+        
+        if displayed_rows > 0
+            table monthly_table = table.new(perf_position, 14, displayed_rows + 1, border_width=1)
+            color header_bg_color = color.new(color.gray, bg_transp)
+            color text_color = color.new(color.white, text_transp)
+            
+            table.cell(monthly_table, 0, 0, "년도/월별", text_size=size.auto, bgcolor=header_bg_color, text_color=text_color)
+            for i = 1 to 12
+                table.cell(monthly_table, i, 0, str.tostring(i, "00") + "월", text_size=size.auto, bgcolor=header_bg_color, text_color=text_color)
+            
+            // ❗️ 수정: 테이블 헤더를 '누적이익(%)'으로 변경
+            table.cell(monthly_table, 13, 0, "누적이익(%)", text_size=size.auto, bgcolor=header_bg_color, text_color=text_color)
+
+            var year_to_row_map = map.new<int, int>()
+            int row_idx_counter = 1
+
+            for yi = 0 to year_size - 1
+                y_time = array.get(final_year_time, yi)
+                y_year = year(y_time)
+
+                if y_year >= year_threshold
+                    if not map.contains(year_to_row_map, y_year)
+                        map.put(year_to_row_map, y_year, row_idx_counter)
+                        row_idx_counter += 1
+
+                    int y_row = map.get(year_to_row_map, y_year)
+                    table.cell(monthly_table, 0, y_row, str.tostring(y_year), text_size=size.auto, bgcolor=header_bg_color, text_color=text_color)
+                    
+                    year_pnl_val = array.get(final_year_pnl, yi)
+                    y_color = year_pnl_val > 0 ? color.new(color.rgb(0, 73, 92), bg_transp) : color.new(color.red, bg_transp)
+                    table.cell(monthly_table, 13, y_row, str.tostring(year_pnl_val * 100, "#,###"), bgcolor=y_color, text_size=size.auto, text_color=text_color) // (year_pnl_val * 100, "#,###.#'%'") 또는 (year_pnl_val * 100, "0.0'%'")
+
+            month_size = array.size(final_month_pnl)
+            for mi = 0 to month_size - 1
+                m_time = array.get(final_month_time, mi)
+                m_year = year(m_time)
+                
+                if m_year >= year_threshold and map.contains(year_to_row_map, m_year)
+                    int m_row = map.get(year_to_row_map, m_year)
+                    int m_col = month(m_time)
+                    
+                    month_pnl_val = array.get(final_month_pnl, mi)
+                    m_color = month_pnl_val > 0 ? color_profit : color.new(color.red, bg_transp)
+                    table.cell(monthly_table, m_col, m_row, str.tostring(month_pnl_val * 100, "#,###"), bgcolor=m_color, text_size=size.auto, text_color=text_color) // str.tostring(month_pnl_val * 100, "0.0'%'") 또는 str.tostring(month_pnl_val * 100, "#,###.#'%'")
+
+
+// ============================================
+// 📈 ENHANCED STATISTICS TABLE / ✔⏸▶☑💠✅||🚃⇛⇏🚨⇅📈🚀
+// ============================================
+show_stats = input.bool(true, '성과 검증✔,', inline='perf2', group='Performance Table')
+stats_position = input.string('top_right', '성과검증 테이블 표시위치🚃', options=['middle_left', 'middle_right', 'bottom_left', 'bottom_right', 'bottom_center', 'top_left', 'top_right', 'top_center'], inline='perf2', group='Performance Table')
+Risk_level = input.int(50, title = '[초당 거래대금] 대비 [투자금액]의 위험 비율(%)', minval = 0, maxval=100, step=1, inline='perf3', group='Performance Table')
+
+daily_dollar_volume = request.security(syminfo.tickerid, "1D", volume[1] * close[1]) //리페인팅을 방지하기 위해 거래대금이 완성된 이전 일봉의 (거래량 * 종가)를 요청하여 정확한 일일 거래대금을 가져옵니다.
+daily_avg_dollar_volume = ta.sma(daily_dollar_volume, 48) // 최근 48일봉간 1봉 평균 거래대금을 산출한 다음 86400으로 나누어 초당 거래대금을 계산 함
+if show_stats and inDate and barstate.islastconfirmedhistory
+    Invest_amount = strategy.equity/1000000
+    total_trades = strategy.closedtrades
+    winning_trades = strategy.wintrades
+    losing_trades = strategy.losstrades
+    win_rate = total_trades > 0 ? winning_trades / total_trades * 100 : 0
+    profit_factor = strategy.grossloss != 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : 0
+    total_return = strategy.initial_capital > 0 ? (strategy.netprofit / strategy.initial_capital) * 100 : 0
+    
+    Invest_amount_vs_avg_bar_TradeAmount_ratio = daily_avg_dollar_volume > 0 ? (Invest_amount/(daily_avg_dollar_volume/86400)) * 100 : 0 // 내 투자금액을 초당 거래대금 대비 비율을 계산  
+    string ratio_formatted = str.tostring(Invest_amount_vs_avg_bar_TradeAmount_ratio, Invest_amount_vs_avg_bar_TradeAmount_ratio >= 1 ? "#,###.##" : "#.###############") + "%"
+    string ratio_header = "투자총액/초당 거래대금"
+    var table stats_table = table.new(stats_position, 8, 2, border_width=1)
+    
+    table.cell(stats_table, 0, 0, "총수익률", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 1, 0, "PF", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 2, 0, "총거래", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 3, 0, "승률", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 4, 0, "Avg Win", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 5, 0, "Avg Loss", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 6, 0, "Max DD", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 7, 0, ratio_header, text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp), tooltip="(투입 자산총액/이전 48봉 평균 거래대금) * 100%")
+
+    table.cell(stats_table, 0, 1, str.tostring(total_return, total_return >= 1000 ? "#,###" : "#") + "%", text_size=size.auto, bgcolor=total_return > 0 ? color.new(color.rgb(0, 73, 92), bg_transp) : color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 1, 1, str.tostring(profit_factor, "#.##"), text_size=size.auto, bgcolor=profit_factor > 1 ? color.new(color.rgb(0, 73, 92), bg_transp) : color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 2, 1, str.tostring(total_trades), text_size=size.auto, bgcolor=color.new(color.gray, 90), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 3, 1, str.tostring(win_rate, "#.#") + "%", text_size=size.auto, bgcolor=win_rate > 50 ? color.new(color.rgb(0, 73, 92), bg_transp) : color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 4, 1, str.tostring(strategy.avg_winning_trade_percent, "#.#") + "%", text_size=size.auto, bgcolor=color.new(color.rgb(0, 73, 92), bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 5, 1, str.tostring(strategy.avg_losing_trade_percent, "#.#") + "%", text_size=size.auto, bgcolor=color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 6, 1, str.tostring(strategy.max_drawdown_percent, "#.#") + "%", text_size=size.auto, bgcolor=color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 7, 1, ratio_formatted, text_size=size.auto, bgcolor=Invest_amount_vs_avg_bar_TradeAmount_ratio < Risk_level ? color.new(color.green, 60) : color.new(color.purple, 60), text_color=color.new(color.white, text_transp))

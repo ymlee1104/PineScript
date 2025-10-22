@@ -1,0 +1,44 @@
+// ============================================
+// 📊 SUPERTREND SETTINGS/백분위수(Percentile)
+// ============================================
+Percent25 = input.int(25, "25 Percent length", inline='%', group="25-75 Percentile SuperTrend/백분위수(Percentile)")
+Percent75 = input.int(75, "75 Percent length", inline='%', group="25-75 Percentile SuperTrend/백분위수(Percentile)")
+subject_per = input.int(125, "Supertrend length", minval=2, inline='sp', group="25-75 Percentile SuperTrend/백분위수(Percentile)") //129
+mult_per = input.float(1.74, "Multiplier", step=0.01, inline='sp', group="25-75 Percentile SuperTrend/백분위수(Percentile)") //1.75
+slen_per = input.int(3, "Percentile length", inline='sp', group="25-75 Percentile SuperTrend/백분위수(Percentile)")
+src_2575 = input.source(close, "Median smoothing source", inline='sp', group="25-75 Percentile SuperTrend/백분위수(Percentile)")
+
+// ============================================
+// 🔧 SUPERTREND FUNCTION/(Percentile:백분위수)
+// ============================================
+Percentile_SuperTrend_func(mult, atrPeriod, src_long, src_short) =>
+    atr = ta.atr(atrPeriod)
+    upper = src_long + mult * atr
+    lower = src_short - mult * atr
+    pl = nz(lower[1], lower)
+    pu = nz(upper[1], upper)
+    lower := lower > pl or close[1] < pl ? lower : pl
+    upper := upper < pu or close[1] > pu ? upper : pu
+    
+    int dist = 0
+    float st = na
+    pt = nz(st[1], st)
+    
+    if close > upper[1]
+        dist := 1
+    else if close < lower[1]
+        dist := -1
+    else
+        dist := nz(dist[1], 0)
+
+    st := dist == 1 ? lower : upper
+    [st, dist]
+
+// ============================================
+// 🎯 SUPERTREND CALCULATION/(Percentile:백분위수)
+// ============================================
+smooth_lower = ta.percentile_nearest_rank(src_2575, slen_per, Percent25)
+smooth_upper = ta.percentile_nearest_rank(src_2575, slen_per, Percent75)
+[x, dist] = Percentile_SuperTrend_func(mult_per, subject_per, smooth_upper, smooth_lower)
+ST_L = dist == 1
+ST_S = dist == -1

@@ -1,0 +1,17 @@
+// ============================================
+// 📈 MACD DEMA SETTINGS
+// ============================================
+fastLen_macd = input.int(22, title='MACD Fast length', inline='macd', group='ENTRY Filters : DI /ADX / OBV / MACD')
+slowLen_macd = input.int(114, title='MACD Slow length', inline='macd', group='ENTRY Filters : DI /ADX / OBV / MACD')
+
+// ============================================
+// 📉 MACD DEMA CALCULATION
+// ============================================
+dema(source, length) =>
+    ema1 = ta.ema(source, length)
+    ema2 = ta.ema(ema1, length)
+    2 * ema1 - ema2
+
+macdDemaLine = dema(close, fastLen_macd) - dema(close, slowLen_macd)
+MACD_L = macdDemaLine > macdDemaLine[1]
+MACD_S = macdDemaLine < macdDemaLine[1]

@@ -1,0 +1,45 @@
+// ============================================
+// 🎯 진입 이격도 제한 / Advanced Disparity(이격도) Index
+// ============================================
+emaPeriod = input.int(15, title="EMA Period", inline = 'di1', group='Entry Limit Filter : by Advanced Disparity State', tooltip='Disparity(이격도) 대비 가격이 너무 높으면 진입 차단')
+lookbackPeriod_ma = input.int(14, title="Lookback Period", inline = 'di1', group='Entry Limit Filter : by Advanced Disparity State')
+overBought_ma = input.float(92, title="Overbought Level", inline = 'di2', group='Entry Limit Filter : by Advanced Disparity State')
+overSold_ma = input.float(10, title="Oversold Level", inline = 'di2', group='Entry Limit Filter : by Advanced Disparity State', tooltip='70~100 이상 롱 포지션 진입 차단 / 30~0 이하 숏 포지션 진입 차단')
+smoothingPeriod_ma = input.int(9, title="Smoothing Period", inline = 'di3', group='Entry Limit Filter : by Advanced Disparity State')
+smoothingType_ma = input.string(title="Smoothing Type", defval="EMA", options=["EMA", "SMA"], inline = 'di3', group='Entry Limit Filter : by Advanced Disparity State')
+
+// ============================================
+// 🎯 Advanced Disparity(이격도) Index
+// ============================================
+price = close
+emaValue = ta.ema(price, emaPeriod)
+disparityIndex = (price - emaValue) / emaValue * 100
+highestHigh = ta.highest(disparityIndex, lookbackPeriod_ma)
+lowestLow = ta.lowest(disparityIndex, lookbackPeriod_ma)
+range_ = highestHigh - lowestLow
+scaledDisparityIndex = nz(range_) == 0 ? 0 : (disparityIndex - lowestLow) / range_ * 100
+smoothedDisparityIndex = switch smoothingType_ma
+    "EMA" => ta.ema(scaledDisparityIndex, smoothingPeriod_ma)
+    "SMA" => ta.sma(scaledDisparityIndex, smoothingPeriod_ma)
+    => na
+Limit_L = (smoothedDisparityIndex < overBought_ma)
+Limit_S = (smoothedDisparityIndex > overSold_ma)
+high_volatility = (smoothedDisparityIndex > overBought_ma) or (smoothedDisparityIndex < overSold_ma)
+
+
+
+
+// ============================================
+// 🎯 진입 이격도 제한(MA기준선 방식)
+// ============================================
+long_limit = input.float(9.0, '롱 진입제한 %', minval=0.0, step=0.1, inline='entlimit', group='진입제한: 진입 이격도 제한', tooltip='SuperTrend 대비 가격이 너무 높으면 진입 차단') / 100
+short_limit = input.float(13.4, ' 숏 진입제한 %', minval=0.0, step=0.1, inline='entlimit', group='진입제한: 진입 이격도 제한') / 100
+
+long_limit_cond = close < x * (1 + long_limit) //'X'는 비교 기준 선
+short_limit_cond = close > x * (1 - short_limit) //'X'는 비교 기준 선
+
+// ============================================
+// 💰 이격도 제한 조건(MA기준선 방식)
+// ============================================
+long_limit_cond = close < x * (1 + long_limit)
+short_limit_cond = close > x * (1 - short_limit)

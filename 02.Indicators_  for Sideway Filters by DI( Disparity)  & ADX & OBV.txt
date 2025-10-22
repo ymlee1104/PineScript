@@ -1,0 +1,45 @@
+// ============================================
+// 💰 POSITION ENTRY FILTER ON/OFF
+// ============================================
+ST_on = input.bool(true, 'SuperTrendLine', inline='SW', group='Switching Position_Entry Filters')
+ADX_on = input.bool(true, 'ADX', inline='SW', group='Switching Position_Entry Filters')
+OBV_on = input.bool(true, 'OBV', inline='SW', group='Switching Position_Entry Filters')
+MACD_on = input.bool(true, 'MACD', inline='SW', group='Switching Position_Entry Filters')
+DI_on = input.bool(true, 'DI방향', inline='SW', group='Switching Position_Entry Filters')
+Limit_on = input.bool(true, 'DI이격도', inline='SW', group='Switching Position_Entry Filters')
+
+// ============================================
+// 💰 POSITION EXIT FILTER ON/OFF
+// ============================================
+exit_on_opposite = input.bool(true, '체크된 신호반전 시 청산 ⇛', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_st_flip = input.bool(false, 'SuperTrend', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_di_flip = input.bool(false, 'DI방향', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_macd_flip = input.bool(false, 'MACD', inline='exit2', group='Switching Position_EXIT Filters')
+
+// VWAP (Volume Weighted Average Price
+vwapValue = ta.vwap(hlc3)
+VWAP_L = close > vwapValue
+VWAP_S = close < vwapValue
+
+// ============================================
+// 💰 DI( Disparity Index)
+// ============================================
+sma_di = ta.sma(src_di, length_di)
+di = sma_di > 0 ? 100 * (src_di - sma_di) / sma_di : 0
+DI_L = di >= 0
+DI_S = di < 0
+
+// ============================================
+// 📊 ADX CALCULATION
+// ============================================
+[plusDI, minusDI, adx] = ta.dmi(dmiLength, adxSmoothing)
+ADX_L = use_di_filter ? (adx > adxThreshold and plusDI > minusDI) : adx > adxThreshold
+ADX_S = use_di_filter ? (adx > adxThreshold and minusDI > plusDI) : adx > adxThreshold
+
+// ============================================
+// 🟢 On Balance Volume Oscillator (계산부하 최적화 버전)
+// ============================================
+float obv_val = ta.obv
+float obv_osc = obv_val - ta.ema(obv_val, length_obv)
+bool OBV_L = obv_osc > Baseline_long
+bool OBV_S = obv_osc < Baseline_short

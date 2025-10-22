@@ -1,0 +1,17 @@
+// ============================================
+// 💰 TAKE PROFIT & STOP LOSS SETTINGS
+// ============================================
+use_tp = input.bool(true, 'TP 사용', inline='tp', group='Take Profit / Stop Loss')
+long_tp_percent = input.float(9.8, 'Long TP(%)', minval=0.1, step=0.1, inline='tp', group='Take Profit / Stop Loss') //9.9
+short_tp_percent = input.float(10.2, 'Short TP(%)', minval=0.1, step=0.1, inline='tp', group='Take Profit / Stop Loss')
+use_sl = input.bool(true, 'SL 사용', inline='sl', group='Take Profit / Stop Loss')
+long_sl_percent = input.float(9.3, 'Long SL(%)', minval=0.1, step=0.1, inline='sl', group='Take Profit / Stop Loss') //9.3
+short_sl_percent = input.float(13.7, 'Short SL(%)', minval=0.1, step=0.1, inline='sl', group='Take Profit / Stop Loss') //13.9
+
+// ============================================
+// 💰 TAKE PROFIT & STOP LOSS PRICES
+// ============================================
+long_tp_price = strategy.position_avg_price * (1 + long_tp_percent / 100)
+short_tp_price = strategy.position_avg_price * (1 - short_tp_percent / 100)
+long_sl_price = strategy.position_avg_price * (1 - long_sl_percent / 100)
+short_sl_price = strategy.position_avg_price * (1 + short_sl_percent / 100)
