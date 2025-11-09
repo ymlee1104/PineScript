@@ -1,0 +1,489 @@
+//@version=5
+strategy("👌VAMA Bands(BreakOut)+!",
+ overlay=true,
+ initial_capital=560,
+ default_qty_value=33, 
+ currency = 'USDT', commission_value = 0.05,
+ default_qty_type = strategy.percent_of_equity,
+ margin_long = 0, margin_short = 0, pyramiding = 0,
+ calc_on_order_fills = false, calc_on_every_tick = false,
+ use_bar_magnifier = true, process_orders_on_close = true,
+ backtest_fill_limits_assumption = 1, // "가격이 지정가에 도달했을 때, 체결된 것으로 인정하기 위해 최소 몇 틱(Tick)을 더 초과하여 돌파해야 하는가?"를 정의, 권장 값: 1
+ slippage = 1) // 제안: 실제거래에서는 지정가 대비 몇 틱 불리한 위치에서 체결되기 때문에 실제와 조금 더 유사한 결과를 얻으려면, 최소한의 슬리피지(예: 1~2틱)를 설정하고 테스트하는 것을 권장
+
+// 이모지: ♻️🎡🎢🥇📈🪜🎆🎇🎈🎉🎍㊗️🎀👜😤💱💲💰🪙⚡🌄🌅☀️🌞☀️🪟🌁🌨️
+// ============================================
+// POSITION Time range SELECTIONS
+// ============================================
+active_long = input.bool(true, '롱', inline='ti1', group='Time range/POSITION SELECTIONS')
+active_short = input.bool(true, '숏:', inline='ti1', group='Time range/POSITION SELECTIONS')
+start_time = input.time(timestamp("2025-01-01 00:00 +0900"), '시작', inline='ti1', group='Time range/POSITION SELECTIONS')
+inDate = time >= start_time
+force_from_time = input.time(timestamp("2025-11-07 09:00 +0900"), '🆑 강제청산 시작구간', inline='ti2', group='Time range/POSITION SELECTIONS')
+force_to_time = input.time(timestamp("2025-11-07 18:59 +0900"), '🆑 강제청산 종료구간', inline='ti2', group='Time range/POSITION SELECTIONS')
+forceCloseTime = time >= force_from_time and time <= force_to_time
+
+// ============================================
+// SHOW PLOT LINES
+// ============================================
+show_vama_band = input.bool(true, 'VAMA Band', inline='sh', group='SHOW PLOT LINES')
+show_sma_line = input.bool(false, 'SMA', inline='sh', group='SHOW PLOT LINES')
+show_tp_line = input.bool(false, 'TP', inline='sh', group='SHOW PLOT LINES')
+show_sl_line = input.bool(false, 'SL', inline='sh', group='SHOW PLOT LINES')
+show_tpsl_lines_from_day = input.int(1, minval=1, title="표시 일 수", inline='sh', group='SHOW PLOT LINES')
+
+// ============================================
+// 💰 POSITION ENTRY FILTER ON/OFF
+// ============================================
+// 방향, 추세
+VAMA_on = input.bool(true, 'VAMA Band', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/SMA/Volatility/VWMA')
+MACD_on = input.bool(true, 'MACD', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/SMA/Volatility/VWMA')
+DI_on = input.bool(true, 'DI 방향성', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/SMA/Volatility/VWMA')
+ADX_on = input.bool(true, 'ADX', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/SMA/Volatility/VWMA')
+OBV_on = input.bool(true, 'OBV', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/SMA/Volatility/VWMA')
+Limit_Entry_on = input.bool(true, '진입제한', inline='SW', group='SW: ST/ADX/OBV/MACD/DI방향/DI이격/SMA/Volatility/VWMA')
+
+// ============================================
+// 💰 POSITION EXIT FILTER ON/OFF
+// ============================================
+exit_on_force_close = input.bool(false, '기간청산', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_opposite = input.bool(true, '역추세 청산 ⇛', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_VAMA_flip = input.bool(false, 'VAMA', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_di_flip = input.bool(false, 'DI방향', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_macd_flip = input.bool(false, 'MACD', inline='exit2', group='Switching Position_EXIT Filters')
+exit_on_sma_flip = input.bool(false, 'SMA', inline='exit2', group='Switching Position_EXIT Filters')
+
+// ============================================
+// 🔧 VAMA Volume Adjusted Moving Average Bands(거래량 조정 이동평균 밴드)
+// ============================================
+lnV  = input.int(42, title="VAMA Length",  minval=1, inline='vw', group='VAMA Volume Adjusted Moving Average Bands') // Richard Arms' default is 55
+fvV  = input.float(0.67, title="VAMA VI Fct",  minval=0.01, step=0.01, inline='vw', group='VAMA Volume Adjusted Moving Average Bands') // Richard Arms' default is 0.67
+vama_avg_lengh = input.int(1, minval=1, title='VAMA AVG Length', inline='vw', group='VAMA Volume Adjusted Moving Average Bands')
+vama_pre_bar =  input.int(1, minval=1, title='VAMA Pre Var', inline='vw', group='VAMA Volume Adjusted Moving Average Bands')
+scV  = input(close, title="VAMA Source", inline='vw', group='VAMA Volume Adjusted Moving Average Bands') // Richard Arms' default is close
+nvb  = input.int (0, title="SampleN (0 = All)", minval=0, inline='vw', group='VAMA Volume Adjusted Moving Average Bands') //평균 거래량 계산: 설정된 기간(nvb, 0일 경우 전체) 동안의 평균 거래량을 계산
+muD  = input(1, title="STDV Factor", inline='vw', group='VAMA Volume Adjusted Moving Average Bands') // multiplier for standard deviations
+lnD  = input(50, title="STDV Length", inline='vw', group='VAMA Volume Adjusted Moving Average Bands') // period length for standard deviations
+
+// ============================================
+// 📈 MACD DEMA SETTINGS
+// ============================================
+fastLen_macd = input.int(23, title='MACD Fast length', inline='macd', group='ENTRY Filters : MACD')
+slowLen_macd = input.int(69, title='MACD Slow length', inline='macd', group='ENTRY Filters : MACD')
+
+// ============================================
+// 🟢 DI(DISPARITY INDEX)
+// ============================================
+length_di = input.int(13, title = 'DI 길이', minval = 1, inline = 'di', group = 'ENTRY Filters : DI /ADX / OBV / MACD')
+src_di = input.source(close, title = 'DI Src', inline = 'di', group = 'ENTRY Filters : DI /ADX / OBV / MACD')
+
+// ============================================
+// 📊 ADX TREND FILTER
+// ============================================
+dmiLength = input.int(15, title="DMI DI", minval=1, inline='adx', group='ENTRY Filters : DI /ADX / OBV / MACD')
+adxSmoothing = input.int(15, title="ADX평활", minval=1, inline='adx', group='ENTRY Filters : DI /ADX / OBV / MACD')
+adxThreshold = input.float(18.5, title="ADX임계", minval=10, step=0.1, inline='adx', group='ENTRY Filters : DI /ADX / OBV / MACD')
+
+// ============================================
+// 🟢 OBV(On Balance Volume Oscillator)
+// ============================================
+length_obv = input.int(28, title="OBV SMA", inline='obv', group='ENTRY Filters : DI /ADX / OBV / MACD')
+Baseline_long = input.int(0, title="기준선(롱)", minval=0, step=1, inline='obv', group='ENTRY Filters : DI /ADX / OBV / MACD') * 10000
+Baseline_short = input.int(0, title="(숏)", minval=0, step=1, inline='obv', group='ENTRY Filters : DI /ADX / OBV / MACD') * -10000
+
+// ============================================
+// 🎯 진입 이격도 제한(SMA기준선 방식)
+// ============================================
+smalen_fast = input.int(1, minval=1, title="SMA Fast", inline='entlimit2', group='진입제한: 진입 이격도 제한')
+smalen_slow = input.int(23, minval=1, title="SMA Slow", inline='entlimit2', group='진입제한: 진입 이격도 제한')
+src_sma = input(close, title="", inline='entlimit2', group='진입제한: 진입 이격도 제한')
+long_limit = input.float(4.4, '롱 진입제한 %', minval=0.0, step=0.1, inline='entlimit2', group='진입제한: 진입 이격도 제한', tooltip='SuperTrend 대비 가격이 너무 높으면 진입 차단') / 100
+short_limit = input.float(4.6, ' 숏 진입제한 %', minval=0.0, step=0.1, inline='entlimit2', group='진입제한: 진입 이격도 제한') / 100
+long_BreakOut = input.float(0.6, 'BreakOut(롱%)', minval=0.0, step=0.1, inline='entlimit2', group='진입제한: 진입 이격도 제한', tooltip='SuperTrend 대비 가격이 너무 높으면 진입 차단') / 100
+short_BreakOut = input.float(0.1, 'BreakOut(숏%)', minval=0.0, step=0.1, inline='entlimit2', group='진입제한: 진입 이격도 제한') / 100
+
+// ============================================
+// 💰 TAKE PROFIT & STOP LOSS SETTINGS
+// ============================================
+use_tp = input.bool(true, 'TP 사용', inline='tp', group='Take Profit / Stop Loss')
+long_tp_percent = input.float(19.9, 'Long TP(%)', minval=0.1, step=0.1, inline='tp', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [해제] 시 적용')
+short_tp_percent = input.float(8.5, 'Short TP(%)', minval=0.1, step=0.1, inline='tp', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [해제] 시 적용')
+use_sl = input.bool(true, 'SL 사용', inline='sl', group='Take Profit / Stop Loss')
+long_sl_percent = input.float(7.2, 'Long SL(%)', minval=0.1, step=0.1, inline='sl', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [해제] 시 적용')
+short_sl_percent = input.float(6.9, 'Short SL(%)', minval=0.1, step=0.1, inline='sl', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [해제] 시 적용')
+
+// --- ATR 설정 (use_atr_tpsl이 true일 때 사용) ---
+bool use_atr_tpsl = input.bool(false, 'ATR TP/SL 사용', inline='atrox', group='Take Profit / Stop Loss', tooltip='체크 시: ATR 기반 TP/SL 사용\n체크 해제 시: 고정 % 기반 TP/SL 사용')
+int atr_len = input.int(14, 'ATR Length', inline='atrox', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [체크] 시 적용')
+float long_tp_atr_mult = input.float(5.6, 'Long TP (ATR x)', minval=0.1, step=0.1, inline='atrtp', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [체크] 시 적용 (진입가 + ATR * 배수)')
+float short_tp_atr_mult = input.float(2.5, 'Short TP (ATR x)', minval=0.1, step=0.1, inline='atrtp', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [체크] 시 적용 (진입가 - ATR * 배수)')
+float long_sl_atr_mult = input.float(7.2, 'Long SL (ATR x)', minval=0.1, step=0.1, inline='atrsl', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [체크] 시 적용 (진입가 - ATR * 배수)')
+float short_sl_atr_mult = input.float(15.3, 'Short SL (ATR x)', minval=0.1, step=0.1, inline='atrsl', group='Take Profit / Stop Loss', tooltip='ATR TP/SL 사용 [체크] 시 적용 (진입가 + ATR * 배수)')
+
+// VAMA Volume Adjusted Moving Average Bands
+bool VAMA_L = na
+bool VAMA_S = na
+var float cum_vol = 0.0 
+vama(_src, _len, _fct, _rul, _nvb, _cum_vol) => // vama(source,length,factor,rule,sample, cum_vol)
+    tvb = 0, tvb := _nvb == 0 ? bar_index + 1 : _nvb // total volume bars used in sample
+    tvs = _nvb == 0 ? _cum_vol : math.sum(volume, _nvb) // total volume in sample
+    v2i = volume / ((tvs / tvb) * _fct) //거래량 비율 계산 (v2i): 현재 캔들의 거래량이 이 '평균 거래량' 대비 얼마나 큰지 비율을 계산 
+    wtd = _src * v2i // weighted prices 
+    nmb = 1 
+    wtdSumB = 0.0 // initialize weighted prices summed back
+    v2iSumB = 0.0  
+    for i = 1 to _len * 7 // for i = 1 to _len * 5~12 set artificial cap for strict to VAMA length * 10 to help reduce edge case timeout errors
+        strict = _rul ? false : i == _len // strict rule N bars' v2i ratios >= vama length, else <= vama length
+        wtdSumB := wtdSumB + nz(wtd[i-1]) // increment number of bars' weighted prices summed back
+        v2iSumB := v2iSumB + nz(v2i[i-1])         
+        if v2iSumB >= _len or strict // if chosen rule met
+            break // break (exit loop)
+        nmb := nmb + 1 // increment number of bars summed back counter
+    (wtdSumB - (v2iSumB - _len) * _src[nmb]) / _len // volume adjusted moving average
+cum_vol := cum_vol + nz(volume) 
+basis_vama = vama(scV, lnV, fvV, true, nvb, cum_vol) 
+stdev_vama = muD * ta.stdev(basis_vama, lnD)
+upper_vama = basis_vama + stdev_vama
+lower_vama = basis_vama - stdev_vama
+
+vama_avg = ta.sma(basis_vama, vama_avg_lengh)
+VAMA_L := vama_avg > vama_avg[vama_pre_bar]
+VAMA_S := vama_avg < vama_avg[vama_pre_bar]
+
+
+// MACD DEMA SETTINGS
+dema(source, length) =>
+    ema1 = ta.ema(source, length)
+    ema2 = ta.ema(ema1, length)
+    2 * ema1 - ema2
+macdDemaLine = MACD_on ? dema(close, fastLen_macd) - dema(close, slowLen_macd) : na // MACD_on이 false면 계산 안 함
+MACD_L = MACD_on ? macdDemaLine > macdDemaLine[1] : na
+MACD_S = MACD_on ? macdDemaLine < macdDemaLine[1] : na
+
+// DI(Disparity INDEX)
+sma_di = DI_on ? ta.sma(src_di, length_di) : na // DI_on이 false면 계산 안 함
+di = DI_on ? (sma_di > 0 ? 100 * (src_di - sma_di) / sma_di : 0) : na
+DI_L = DI_on ? di >= 0 : na
+DI_S = DI_on ? di < 0 : na
+
+// ADX TREND FILTER
+// 1. 최종 변수를 'na' 값으로 먼저 선언합니다.
+float plusDI = na
+float minusDI = na
+float adx = na
+
+// 2. ADX_on이 true일 때만 계산 블록을 실행합니다.
+if (ADX_on)
+    // 3. ta.dmi()의 결과를 '임시 변수'로 선언하여 받습니다. (이 변수들은 if 블록 내에서만 존재)
+    [diPlusTmp, diMinusTmp, adxTmp] = ta.dmi(dmiLength, adxSmoothing)
+    
+    // 4. ':=' 연산자를 사용해 1번에서 선언한 '최종 변수'에 값을 '개별적으로' 재할당합니다.
+    plusDI := diPlusTmp
+    minusDI := diMinusTmp
+    adx := adxTmp
+
+// 5. ADX_L, ADX_S 계산 로직은 이제 정상적으로 작동합니다.
+ADX_L = ADX_on ? (DI_on ? (adx > adxThreshold and plusDI > minusDI) : adx > adxThreshold) : na
+ADX_S = ADX_on ? (DI_on ? (adx > adxThreshold and minusDI > plusDI) : adx > adxThreshold) : na
+
+// OBV(On Balance Volume Oscillator)
+float obv_val = OBV_on ? ta.obv : na // OBV_on이 false면 계산 안 함
+float obv_osc = OBV_on ? obv_val - ta.ema(obv_val, length_obv) : na
+bool OBV_L = OBV_on ? obv_osc > Baseline_long : na
+bool OBV_S = OBV_on ? obv_osc < Baseline_short : na
+
+// Disparity Index & BreakOut(진입 이격도 제한)
+sma_fast = ta.sma(src_sma, smalen_fast)
+sma_slow = ta.sma(src_sma, smalen_slow)
+sma_flip_L = close > sma_slow or ta.rising(low, 3)
+sma_flip_S = close < sma_slow or ta.falling(high, 3)
+DILimit_L = Limit_Entry_on ? close < sma_slow * (1 + long_limit) : na
+DILimit_S = Limit_Entry_on ? close > sma_slow * (1 - short_limit) : na
+BreakOut_L = Limit_Entry_on ? close > sma_slow * (1 + long_BreakOut) : na
+BreakOut_S = Limit_Entry_on ? close < sma_slow * (1 - short_BreakOut) : na
+Limit_Entry_L = DILimit_L and BreakOut_L
+Limit_Entry_S = DILimit_S and BreakOut_S
+
+// TAKE PROFIT & STOP LOSS CALCULATION / ATR CALCULATION (for TP/SL)
+float atr_val = use_atr_tpsl ? ta.atr(atr_len) : na
+float long_tp_price = use_atr_tpsl ? 
+     strategy.position_avg_price + (atr_val * long_tp_atr_mult) : 
+     strategy.position_avg_price * (1 + long_tp_percent / 100)
+
+float short_tp_price = use_atr_tpsl ?
+     strategy.position_avg_price - (atr_val * short_tp_atr_mult) :
+     strategy.position_avg_price * (1 - short_tp_percent / 100)
+
+float long_sl_price = use_atr_tpsl ?
+     strategy.position_avg_price - (atr_val * long_sl_atr_mult) :
+     strategy.position_avg_price * (1 - long_sl_percent / 100)
+
+float short_sl_price = use_atr_tpsl ?
+     strategy.position_avg_price + (atr_val * short_sl_atr_mult) :
+     strategy.position_avg_price * (1 + short_sl_percent / 100)
+
+// ============================================
+// 🚀 POSITION ENTRY Filters
+// ============================================
+valid_open_long =
+     inDate and active_long and not forceCloseTime and
+     (not VAMA_on           or VAMA_L) and
+     (not MACD_on           or MACD_L) and
+     (not DI_on             or DI_L) and
+     (not ADX_on            or ADX_L) and
+     (not OBV_on            or OBV_L) and
+     (not Limit_Entry_on    or Limit_Entry_L)
+          
+valid_open_short =
+     inDate and active_short and not forceCloseTime and
+     (not VAMA_on           or VAMA_S) and
+     (not MACD_on           or MACD_S) and
+     (not DI_on             or DI_S) and
+     (not ADX_on            or ADX_S) and
+     (not OBV_on            or OBV_S) and
+     (not Limit_Entry_on    or Limit_Entry_S)
+          
+// ============================================
+// 📍 POSITION EXIT MANAGEMENT
+// ============================================
+has_long  = strategy.position_size > 0
+has_short = strategy.position_size < 0
+
+// 롱 포지션 조기 청산 조건 (논리식으로 통합)
+should_exit_long = has_long and exit_on_opposite and (
+     (exit_on_VAMA_flip and VAMA_S) or
+     (exit_on_di_flip and DI_S) or
+     (exit_on_macd_flip and MACD_S) or
+     (exit_on_sma_flip and sma_flip_S) or   
+     (exit_on_force_close and forceCloseTime)
+     )
+
+// 숏 포지션 조기 청산 조건 (논리식으로 통합)
+should_exit_short = has_short and exit_on_opposite and (
+     (exit_on_VAMA_flip and VAMA_L) or
+     (exit_on_di_flip and DI_L) or
+     (exit_on_macd_flip and MACD_L) or
+     (exit_on_sma_flip and sma_flip_L) or        
+     (exit_on_force_close and forceCloseTime)     
+     )
+
+// ============================================
+// 📍 POSITION ENTRY & CLOSE & EXIT MANAGEMENT
+// ============================================
+if valid_open_long
+    strategy.entry("Long", strategy.long, comment="E🟢L")
+
+if valid_open_short
+    strategy.entry("Short", strategy.short, comment="E🔵S")
+
+// TP/SL 및 조기 청산 로직
+if has_long
+    if should_exit_long
+        strategy.close(id="Long", comment="Exit🔄")
+    else
+        strategy.exit(id="Exit Long", from_entry="Long",
+         limit=use_tp ? long_tp_price : na,
+         stop=use_sl ? long_sl_price : na,
+         comment_profit="T👜P", comment_loss="L❌SL")
+
+if has_short
+    if should_exit_short
+        strategy.close(id="Short", comment="Exit🔄")
+    else
+        strategy.exit(id="Exit Short", from_entry="Short",
+         limit=use_tp ? short_tp_price : na,
+         stop=use_sl ? short_sl_price : na,
+         comment_profit="T🧰P", comment_loss="S❌SL")
+
+
+// ============================================
+// 🎨 VISUAL COMPONENTS
+// ============================================
+fill_color = inDate ? (valid_open_long ? color.new(color.green, 75) : valid_open_short ? color.new(color.fuchsia, 70) : color.new(color.yellow, 70)) : na
+trend_color = inDate ? (VAMA_L ? color.new(color.rgb(45, 162, 252), 75) : VAMA_S ? color.new(color.purple, 70) : color.new(color.yellow, 70)) : na
+
+plotU = plot(inDate and show_vama_band ? upper_vama : na, title = "VAMA Upper", color=color.new(color.aqua, 30), linewidth = 1, display=display.none, editable=false)
+plotB = plot(inDate and show_vama_band ? basis_vama : na, title = "VAMA Basis", color=color.new(color.white, 10), linewidth = 2)
+plotL = plot(inDate and show_vama_band ? lower_vama : na, title = "VAMA Lower", color=color.new(color.teal, 30), linewidth = 1, display=display.none, editable=false)
+fill(plotL, plotB, color=VAMA_L ? trend_color : fill_color, title = "Lower")
+fill(plotU, plotB, color=VAMA_S ? trend_color : fill_color, title = "Lower")
+
+// ===================================================================
+// 🚀 최근지정 일 수 이내 캔들에만 TP / SL / Position 라인 표시
+// ===================================================================
+float days_in_ms = show_tpsl_lines_from_day * 24.0 * 60.0 * 60.0 * 1000.0   // 1. 지정 일 수를 밀리초(ms) 단위로 정의합니다.  (1일 = 24시간 * 60분 * 60초 * 1000ms = 86,400,000ms)
+float time_difference = timenow - time                                      // 2. '오늘' (차트의 가장 최근 시간)과 '현재 바의 시간'의 차이를 계산합니다.
+bool is_within_days = time_difference < days_in_ms                          // 3. 시간 차이가 'show_tpsl_lines_from_day'일 이내이면 'true'가 됩니다.
+plot(is_within_days and show_tp_line and has_long and use_tp ? long_tp_price : na, "Long TP", color=color.new(color.green, 0), style=plot.style_linebr, linewidth=3, offset=1)
+plot(is_within_days and show_tp_line and has_short and use_tp ? short_tp_price : na, "Short TP", color=color.new(color.orange, 0), style=plot.style_linebr, linewidth=3, offset=1)
+plot(is_within_days and show_sl_line and has_long and use_sl ? long_sl_price : na, "Long SL", color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=3, offset=1)
+plot(is_within_days and show_sl_line and has_short and use_sl ? short_sl_price : na, "Short SL", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=3, offset=1)
+
+// SMA TREND LINE
+pfast=plot(inDate and show_sma_line ? sma_fast : na, title="SMA Fast Line", color=fill_color, linewidth = 2, editable=false)
+pslow= plot(inDate ? sma_slow : na, title='SMA Slow Line', color=sma_slow > sma_slow[1] ? color.new(color.aqua, 50) : color.new(color.red, 50), linewidth=4)
+fill(pfast, pslow, color=fill_color)
+
+// plotcandle 함수를 사용하여 Body, Wick, Border 색상을 동일하게 지정 // 차트의 원래 캔들은 체크해제해서 비활성화 할 것
+bar_color = inDate ? (VAMA_L ? color.new(color.lime, 15) : VAMA_S ? color.new(color.red, 15) : na) : na
+plotcandle(open, high, low, close, color = bar_color, wickcolor = bar_color, bordercolor = bar_color)
+
+series = strategy.opentrades.entry_price(strategy.opentrades - 1)
+plot(ta.vwap, title='VWAP Line', color=color.new(color.yellow, 0), linewidth=2, display=display.none)   
+plot(is_within_days ? series : na, title = 'Position Entry Line', color=strategy.position_size > 0 ? color.new(#f4f801, 0) : strategy.position_size < 0 ? color.new(#fcba05, 0): na, style = plot.style_cross, linewidth = 3, offset = 1)
+
+
+// ============================================
+// 📊 TWO TABLES COMMON INPUT
+// ============================================
+bg_transp = input.int(85, '배경 투명도⇅', minval=0, maxval=100, inline='perf0', group='Performance Table')
+text_transp = input.int(45, 'TEXT 투명도⇅', minval=0, maxval=100, inline='perf0', group='Performance Table')
+
+// ============================================
+// 📊 PERFORMANCE TABLE
+// ============================================
+show_performance = input.bool(true, '이익률 표시✔,', inline='perf1', group='Performance Table')
+perf_position = input.string('bottom_right', '표시위치🚃', options=['middle_right', 'bottom_left', 'bottom_right', 'bottom_center', 'top_left', 'top_right', 'top_center'], inline='perf1', group='Performance Table')
+years_qty = input.int(1, '표시년수⇅', minval=1, inline='perf1', group='Performance Table') - 1
+
+// --- 변수 선언 ---
+var color_profit = color.new(color.black, bg_transp)
+var float cur_month_pnl = 0.0
+var float[] month_pnl = array.new<float>()
+var int[] month_time = array.new<int>()
+var float[] year_pnl = array.new<float>()
+var int[] year_time = array.new<int>()
+var int max_array_size = 200
+
+// --- 계산부 ---
+float bar_pnl = strategy.equity != strategy.equity[1] and nz(strategy.equity[1]) > 0 ? (strategy.equity / strategy.equity[1] - 1) : 0.0
+
+if inDate and show_performance
+    bool new_month = month(time) != month(time[1])
+    bool new_year = year(time) != year(time[1])
+
+    cur_month_pnl := new_month ? 0.0 : (1 + nz(cur_month_pnl[1])) * (1 + bar_pnl) - 1
+
+    if new_month
+        array.push(month_pnl, cur_month_pnl[1])
+        array.push(month_time, time[1])
+        if array.size(month_pnl) > max_array_size
+            array.shift(month_pnl)
+            array.shift(month_time)
+
+    if new_year
+        float cumulative_pnl = strategy.netprofit[1] / strategy.initial_capital
+        array.push(year_pnl, cumulative_pnl)
+        array.push(year_time, time[1])
+        if array.size(year_pnl) > max_array_size
+            array.shift(year_pnl)
+            array.shift(year_time)
+
+// --- 테이블 그리기 ---
+if show_performance and barstate.islastconfirmedhistory
+    float final_cumulative_pnl = strategy.netprofit / strategy.initial_capital
+    
+    float[] final_year_pnl = array.copy(year_pnl)
+    int[] final_year_time = array.copy(year_time)
+    array.push(final_year_pnl, final_cumulative_pnl)
+    array.push(final_year_time, time)
+    
+    float[] final_month_pnl = array.copy(month_pnl)
+    int[] final_month_time = array.copy(month_time)
+    array.push(final_month_pnl, cur_month_pnl)
+    array.push(final_month_time, time)
+
+    year_size = array.size(final_year_pnl)
+    if year_size > 0
+        year_threshold = year(time) - years_qty
+        int displayed_rows = 0
+        for i = 0 to year_size - 1
+            if year(array.get(final_year_time, i)) >= year_threshold
+                displayed_rows += 1
+        
+        if displayed_rows > 0
+            table monthly_table = table.new(perf_position, 14, displayed_rows + 1, border_width=1)
+            color header_bg_color = color.new(color.gray, bg_transp)
+            color text_color = color.new(color.white, text_transp)
+            
+            table.cell(monthly_table, 0, 0, "년도/월별", text_size=size.auto, bgcolor=header_bg_color, text_color=text_color)
+            for i = 1 to 12
+                table.cell(monthly_table, i, 0, str.tostring(i, "00") + "월", text_size=size.auto, bgcolor=header_bg_color, text_color=text_color)
+            
+            // ❗️ 수정: 테이블 헤더를 '누적이익(%)'으로 변경
+            table.cell(monthly_table, 13, 0, "누적이익(%)", text_size=size.auto, bgcolor=header_bg_color, text_color=text_color)
+
+            var year_to_row_map = map.new<int, int>()
+            int row_idx_counter = 1
+
+            for yi = 0 to year_size - 1
+                y_time = array.get(final_year_time, yi)
+                y_year = year(y_time)
+
+                if y_year >= year_threshold
+                    if not map.contains(year_to_row_map, y_year)
+                        map.put(year_to_row_map, y_year, row_idx_counter)
+                        row_idx_counter += 1
+
+                    int y_row = map.get(year_to_row_map, y_year)
+                    table.cell(monthly_table, 0, y_row, str.tostring(y_year), text_size=size.auto, bgcolor=header_bg_color, text_color=text_color)
+                    
+                    year_pnl_val = array.get(final_year_pnl, yi)
+                    y_color = year_pnl_val > 0 ? color.new(color.rgb(0, 73, 92), bg_transp) : color.new(color.red, bg_transp)
+                    table.cell(monthly_table, 13, y_row, str.tostring(year_pnl_val * 100, "#,###"), bgcolor=y_color, text_size=size.auto, text_color=text_color) // (year_pnl_val * 100, "#,###.#'%'") 또는 (year_pnl_val * 100, "0.0'%'")
+
+            month_size = array.size(final_month_pnl)
+            for mi = 0 to month_size - 1
+                m_time = array.get(final_month_time, mi)
+                m_year = year(m_time)
+                
+                if m_year >= year_threshold and map.contains(year_to_row_map, m_year)
+                    int m_row = map.get(year_to_row_map, m_year)
+                    int m_col = month(m_time)
+                    
+                    month_pnl_val = array.get(final_month_pnl, mi)
+                    m_color = month_pnl_val > 0 ? color_profit : color.new(color.red, bg_transp)
+                    table.cell(monthly_table, m_col, m_row, str.tostring(month_pnl_val * 100, "#,###"), bgcolor=m_color, text_size=size.auto, text_color=text_color) // str.tostring(month_pnl_val * 100, "0.0'%'") 또는 str.tostring(month_pnl_val * 100, "#,###.#'%'")
+
+
+// ============================================
+// 📈 ENHANCED STATISTICS TABLE / ✔⏸▶☑💠✅||🚃⇛⇏🚨⇅📈🚀
+// ============================================
+show_stats = input.bool(true, '성과 검증✔,', inline='perf2', group='Performance Table')
+stats_position = input.string('top_right', '성과검증 테이블 표시위치🚃', options=['middle_left', 'middle_right', 'bottom_left', 'bottom_right', 'bottom_center', 'top_left', 'top_right', 'top_center'], inline='perf2', group='Performance Table')
+Risk_level = input.int(50, title = '[초당 거래대금] 대비 [투자금액]의 위험 비율(%)', minval = 0, maxval=100, step=1, inline='perf3', group='Performance Table')
+
+daily_dollar_volume = request.security(syminfo.tickerid, "1D", volume[1] * close[1]) //리페인팅을 방지하기 위해 거래대금이 완성된 이전 일봉의 (거래량 * 종가)를 요청하여 정확한 일일 거래대금을 가져옵니다.
+ta_sma=ta.sma(daily_dollar_volume, 48) // 최근 48일봉간 1봉 평균 거래대금을 산출한 다음 86400으로 나누어 초당 거래대금을 계산 함
+if show_stats and inDate and barstate.islastconfirmedhistory
+    daily_avg_dollar_volume = ta_sma
+    Invest_amount = strategy.equity/1000000
+    total_trades = strategy.closedtrades
+    winning_trades = strategy.wintrades
+    losing_trades = strategy.losstrades
+    win_rate = total_trades > 0 ? winning_trades / total_trades * 100 : 0
+    profit_factor = strategy.grossloss != 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : 0
+    total_return = strategy.initial_capital > 0 ? (strategy.netprofit / strategy.initial_capital) * 100 : 0
+    
+    Invest_amount_vs_avg_bar_TradeAmount_ratio = daily_avg_dollar_volume > 0 ? (Invest_amount/(daily_avg_dollar_volume/86400)) * 100 : 0 // 내 투자금액을 초당 거래대금 대비 비율을 계산  
+    string ratio_formatted = str.tostring(Invest_amount_vs_avg_bar_TradeAmount_ratio, Invest_amount_vs_avg_bar_TradeAmount_ratio >= 1 ? "#,###.##" : "#.###############") + "%"
+    string ratio_header = "투자총액/초당 거래대금"
+    var table stats_table = table.new(stats_position, 8, 2, border_width=1)
+    
+    table.cell(stats_table, 0, 0, "총수익률", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 1, 0, "PF", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 2, 0, "총거래", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 3, 0, "승률", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 4, 0, "Avg Win", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 5, 0, "Avg Loss", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 6, 0, "Max DD", text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 7, 0, ratio_header, text_size=size.auto, bgcolor=color.new(color.gray, bg_transp), text_color=color.new(color.white, text_transp), tooltip="(투입 자산총액/이전 48봉 평균 거래대금) * 100%")
+
+    table.cell(stats_table, 0, 1, str.tostring(total_return, total_return >= 1000 ? "#,###" : "#") + "%", text_size=size.auto, bgcolor=total_return > 0 ? color.new(color.rgb(0, 73, 92), bg_transp) : color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 1, 1, str.tostring(profit_factor, "#.##"), text_size=size.auto, bgcolor=profit_factor > 1 ? color.new(color.rgb(0, 73, 92), bg_transp) : color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 2, 1, str.tostring(total_trades), text_size=size.auto, bgcolor=color.new(color.gray, 90), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 3, 1, str.tostring(win_rate, "#.#") + "%", text_size=size.auto, bgcolor=win_rate > 50 ? color.new(color.rgb(0, 73, 92), bg_transp) : color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 4, 1, str.tostring(strategy.avg_winning_trade_percent, "#.#") + "%", text_size=size.auto, bgcolor=color.new(color.rgb(0, 73, 92), bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 5, 1, str.tostring(strategy.avg_losing_trade_percent, "#.#") + "%", text_size=size.auto, bgcolor=color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 6, 1, str.tostring(strategy.max_drawdown_percent, "#.#") + "%", text_size=size.auto, bgcolor=color.new(color.red, bg_transp), text_color=color.new(color.white, text_transp))
+    table.cell(stats_table, 7, 1, ratio_formatted, text_size=size.auto, bgcolor=Invest_amount_vs_avg_bar_TradeAmount_ratio < Risk_level ? color.new(color.green, 60) : color.new(color.purple, 60), text_color=color.new(color.white, text_transp))
