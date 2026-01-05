@@ -1,0 +1,266 @@
+//@version=6
+indicator("⚜️Quad Trend Master & KalmanOSC", overlay=true)
+
+// 시작-종료
+grp_time        = "시작일-종료일 범위"
+start_time      = input.time(timestamp("2026-01-01 00:00 +0900"), '시작일', inline='t2', group=grp_time)
+end_time        = input.time(timestamp("2099-12-31 00:00 +0900"), '종료일', inline='t2', group=grp_time)
+inDate          = time >= start_time and time <= end_time
+
+// ==============================================================================
+// 1. 통합 입력 설정 (Inputs)
+// ==============================================================================
+// --- ZigZag Trend_Color Inputs ---
+grp_zigzag = "1. Zig Zag Line"
+useZig = input.bool(true, "ZigZag", inline='zigzag', group=grp_zigzag)
+Zigdev = input.float(0.5, "이격", step=0.1, inline='zigzag', group=grp_zigzag) / 100
+Zigthk = input.int(1, "두께", inline='zigzag', group=grp_zigzag)
+ZigtxtSz = input.string(size.normal, "크기", options=[size.tiny, size.small, size.normal, size.large], inline='zigzag', group=grp_zigzag)
+
+// --- MTF Tillson T3 Inputs ---
+grp_t3      = "2. MTF Tillson T3"
+use_t3      = input.bool(true, "T3사용", inline='mtf_t3', group=grp_t3)
+res_t3      = input.timeframe('', "", inline='mtf_t3', group=grp_t3)
+len_t3      = input.int(8, "길이", inline='mtf_t3', group=grp_t3)
+vol_t3      = input.float(0.7, "볼륨 팩터", inline='mtf_t3', group=grp_t3)
+
+// --- JMA Inputs ---
+grp_jma     = "3. Jurik Moving Average (JMA)"
+use_jma     = input.bool(false, "JMA사용", inline='jma', group=grp_jma)
+len_jma     = input.int(30, "길이", inline='jma', group=grp_jma)
+phase_jma   = input.int(50, "위상", inline='jma', group=grp_jma)
+pow_jma     = input.float(2, "파워", inline='jma', group=grp_jma)
+
+// --- ALMA Inputs ---
+grp_alma    = "4. ALMA Trend"
+use_alma    = input.bool(false, "ALMA사용", inline='alma1', group=grp_alma)
+src_alma    = input.source(close, "ALMA Source", inline='alma1', group=grp_alma)
+len_alma    = input.int(30, "길이", minval=1, inline='alma2', group=grp_alma)
+off_alma    = input.float(0.85, "오프셋", minval=0.0001, inline='alma2', group=grp_alma)
+sig_alma    = input.int(6, "시그마", minval=1, inline='alma2', group=grp_alma)
+
+// --- Range Filter Inputs ---
+grp_rf      = "5. Range Filter"
+use_rf      = input.bool(false, "RF사용", inline='rf1', group=grp_rf)
+src_rf      = input.source(close, "소스", inline='rf1', group=grp_rf)
+per_rf      = input.int(240, "기간", minval=1, inline='rf1', group=grp_rf)
+mult_rf     = input.float(6.0, "승수", minval=0.1, step=0.1, inline='rf1', group=grp_rf)
+
+// --- Line width Settings ---
+grp_lineW   = 'Lines width Settings'
+width_line1 = input.int(2, "Tillson/Jurik/ALMA", inline='line', group=grp_lineW)
+width_line2 = input.int(4, "Range Filter", inline='line', group=grp_lineW)
+
+// --- Trend Color Settings ---
+grp_color   = 'Trend Color Settings'
+col_t3_up   = input.color(color.green, "MTF Tillson T3", inline='coup', group=grp_color)
+col_jma_up  = input.color(color.green, "Jurik MA", inline='coup', group=grp_color)
+col_alma_up = input.color(color.aqua, "ALMA", inline='coup', group=grp_color)
+col_rf_up   = input.color(color.new(#00e676, 0), "Range Filter", inline='coup', group=grp_color)
+
+col_t3_dn   = input.color(color.fuchsia, "MTF Tillson T3", inline='codn', group=grp_color)
+col_jma_dn  = input.color(color.red, "Jurik MA", inline='codn', group=grp_color)
+col_alma_dn = input.color(color.fuchsia, "ALMA", inline='codn', group=grp_color)
+col_rf_dn   = input.color(color.new(#ff5252, 0), "Range Filter", inline='codn', group=grp_color)
+
+// ==============================================================================
+// 0. ZigZag Trend_Color Calculation ---
+// ==============================================================================
+var line lLine = na, var label lLbl = na, var int dir = 0 
+var float lastP = close, var float startP = close, var int lastIdx = bar_index
+
+if useZig and inDate
+    bool isUp = dir >= 0
+    float target = isUp ? high : low
+    bool extCond = isUp ? high > lastP : low < lastP
+    bool revCond = isUp ? low < lastP * (1 - Zigdev) : high > lastP * (1 + Zigdev)
+
+    if extCond // [추세 지속] 고점/저점 갱신 시 라인 및 라벨 연장
+        lastP := target, lastIdx := bar_index
+        line.set_xy2(lLine, lastIdx, lastP), label.set_xy(lLbl, lastIdx, lastP)
+        label.set_text(lLbl, str.tostring((lastP - startP) / startP * 100, format.percent))
+        
+    else if revCond // [추세 반전] 새로운 라인 및 라벨 생성
+        startP := lastP, lastP := isUp ? low : high // 시작점 저장 후 현재가 갱신
+        color c = isUp ? color.red : color.green // 반전될 색상 결정 (상승중이면 하락색으로)
+        lLine := line.new(lastIdx, startP, bar_index, lastP, color=c, width=Zigthk)
+        lLbl  := label.new(bar_index, lastP, str.tostring((lastP-startP)/startP*100, format.percent),
+                 style=isUp?label.style_label_up:label.style_label_down, color=color.new(color.white,100), textcolor=c, size=ZigtxtSz)
+        lastIdx := bar_index, dir := isUp ? -1 : 1 // 인덱스 저장 및 방향 전환
+
+// ==============================================================================
+// 2. 전역 변수 선언 (Global Scope Declaration)
+// ==============================================================================
+// [MTF T3 Variables]
+var bool  t3_upTrend    = false // false 초기화 (const 에러 방지)
+float     t3_final      = na    // Security 결과 저장용 (매 틱 갱신되므로 var 불필요)
+
+// [JMA Variables]
+var float jma_val       = 0.0
+var float jma_e0        = 0.0
+var float jma_e1        = 0.0
+var float jma_e2        = 0.0
+
+// [ALMA Variables]
+float     alma_val      = na    // 결과 저장용
+
+// [Range Filter Variables]
+var float rf_trend      = na
+var int   rf_direction  = 0
+var float rf_high_band  = na
+var float rf_low_band   = na
+var bool  rf_isLong     = false
+var bool  rf_isShort    = false
+
+
+// ==============================================================================
+// 3. 지표별 로직 계산 (Calculation Logic)
+// ==============================================================================
+// ------------------------------------------------------------------------------
+// 3.1 MTF Tillson T3 Logic
+// ------------------------------------------------------------------------------
+float e1_t3 = ta.ema((high + low + 2 * close) / 4, len_t3)
+float e2_t3 = ta.ema(e1_t3, len_t3)
+float e3_t3 = ta.ema(e2_t3, len_t3)
+float e4_t3 = ta.ema(e3_t3, len_t3)
+float e5_t3 = ta.ema(e4_t3, len_t3)
+float e6_t3 = ta.ema(e5_t3, len_t3)
+
+if use_t3 and inDate
+    // T3 Components Calculation
+
+    float c1_t3 = -vol_t3 * vol_t3 * vol_t3
+    float c2_t3 = 3 * vol_t3 * vol_t3 + 3 * vol_t3 * vol_t3 * vol_t3
+    float c3_t3 = -6 * vol_t3 * vol_t3 - 3 * vol_t3 - 3 * vol_t3 * vol_t3 * vol_t3
+    float c4_t3 = 1 + 3 * vol_t3 + vol_t3 * vol_t3 * vol_t3 + 3 * vol_t3 * vol_t3
+
+    float T3_calc = c1_t3 * e6_t3 + c2_t3 * e5_t3 + c3_t3 * e4_t3 + c4_t3 * e3_t3
+    
+    // MTF Request
+    t3_final := request.security(syminfo.tickerid, res_t3, T3_calc)
+
+    // 추세 판단 (수평 구간 색상 유지)
+    if not na(t3_final)
+        if t3_final > t3_final[1]
+            t3_upTrend := true
+        else if t3_final < t3_final[1]
+            t3_upTrend := false
+        // 같을 경우 이전 상태 유지
+
+// ------------------------------------------------------------------------------
+// 3.2 JMA Logic
+// ------------------------------------------------------------------------------
+if use_jma and inDate
+    float phaseRatio = phase_jma < -100 ? 0.5 : phase_jma > 100 ? 2.5 : phase_jma / 100 + 1.5
+    float beta_jma   = 0.45 * (len_jma - 1) / (0.45 * (len_jma - 1) + 2)
+    float alpha_jma  = math.pow(beta_jma, pow_jma)
+
+    // JMA Calculation
+    jma_e0 := (1 - alpha_jma) * close + alpha_jma * nz(jma_e0[1])
+    jma_e1 := (close - jma_e0) * (1 - beta_jma) + beta_jma * nz(jma_e1[1])
+    jma_e2 := (jma_e0 + phaseRatio * jma_e1 - nz(jma_val[1])) * math.pow(1 - alpha_jma, 2) + math.pow(alpha_jma, 2) * nz(jma_e2[1])
+    jma_val := jma_e2 + nz(jma_val[1])
+
+// ------------------------------------------------------------------------------
+// 3.3 ALMA Logic
+// ------------------------------------------------------------------------------
+ta_alma=ta.alma(src_alma, len_alma, off_alma, sig_alma)
+alma_val := use_alma and inDate ? ta_alma : na
+
+// ------------------------------------------------------------------------------
+// 3.4 Range Filter Logic
+// ------------------------------------------------------------------------------
+int wper_rf     = per_rf * 2 - 1
+float avrng_rf  = ta.ema(math.abs(src_rf - src_rf[1]), per_rf)
+float smrng_rf  = ta.ema(avrng_rf, wper_rf) * mult_rf
+
+if use_rf and inDate
+    float h_band_rf = src_rf + smrng_rf
+    float l_band_rf = src_rf - smrng_rf
+
+    if bar_index == 0
+        rf_high_band := h_band_rf
+        rf_low_band  := l_band_rf
+        rf_trend     := src_rf
+    else
+        rf_low_band  := (src_rf > rf_low_band[1]) ? math.max(l_band_rf, rf_low_band[1]) : l_band_rf
+        rf_high_band := (src_rf < rf_high_band[1]) ? math.min(h_band_rf, rf_high_band[1]) : h_band_rf
+        
+        int prev_dir_rf = rf_direction[1]
+        if prev_dir_rf == 1
+            rf_direction := (src_rf < rf_low_band[1]) ? -1 : 1
+        else
+            if prev_dir_rf == -1
+                rf_direction := (src_rf > rf_high_band[1]) ? 1 : -1
+            else
+                rf_direction := 1
+
+        rf_trend := (rf_direction == 1) ? rf_low_band : rf_high_band
+
+    rf_isLong  := (rf_direction == 1) and (rf_direction[1] == -1)
+    rf_isShort := (rf_direction == -1) and (rf_direction[1] == 1)
+
+
+// ==============================================================================
+// 4. 시각화 (Visualization)
+// ==============================================================================
+// --- MTF T3 Plot ---
+col_t3_line = use_t3 ? (t3_upTrend ? col_t3_up : col_t3_dn) : na
+plot(use_t3 ? t3_final : na, color=col_t3_line, linewidth=width_line1, title='MTF T3', editable=false)
+
+// --- JMA Plot ---
+col_jma_line = use_jma ? (jma_val > jma_val[1] ? col_jma_up : col_jma_dn) : na
+plot(use_jma ? jma_val : na, title='JMA', linewidth=width_line1, color=col_jma_line, editable=false)
+
+// --- ALMA Plot ---
+col_alma_line = use_alma ? (alma_val >= alma_val[1] ? col_alma_up : col_alma_dn) : na
+p_alma = plot(use_alma ? alma_val : na, title='ALMA', color=col_alma_line, linewidth=width_line1, editable=false)
+
+// --- Range Filter Plot ---
+col_rf_line = use_rf ? (rf_direction == 1 ? col_rf_up : col_rf_dn) : na
+plot(use_rf ? rf_trend : na, color=col_rf_line, linewidth=width_line2, title="Range Filter Trend", editable=false)
+plotshape(use_rf and rf_isLong,  title="RF Long",
+  style=shape.labelup,   location=location.belowbar,
+  color=col_rf_up, text="RF-L", textcolor=color.white, size=size.tiny, editable=false)
+plotshape(use_rf and rf_isShort, title="RF Short",
+  style=shape.labeldown, location=location.abovebar,
+  color=col_rf_dn, text="RF-S", textcolor=color.white, size=size.tiny, editable=false)
+
+
+// ==============================================================================
+// 5. 알람 설정 (Alert Conditions)
+// ==============================================================================
+// 1) MTF T3 Alerts
+// T3가 상승 추세로 전환(골든크로스) 또는 하락 추세로 전환(데드크로스)할 때 알람 발생
+bool t3_longCondition  = use_t3 and t3_upTrend and not t3_upTrend[1]
+bool t3_shortCondition = use_t3 and not t3_upTrend and t3_upTrend[1]
+alertcondition(t3_longCondition, title="⚜️MTF T3: Long Entry", message="⚜️MTF T3: Long Entry Signal Detected!")
+alertcondition(t3_shortCondition, title="⚜️MTF T3: Short Entry", message="⚜️MTF T3: Short Entry Signal Detected!")
+
+// 2) JMA Alerts
+// JMA가 상승하기 시작(Long) 또는 하락하기 시작(Short)할 때 알람 발생
+bool jma_rising = jma_val > jma_val[1]
+bool jma_longCondition = use_jma and jma_rising and not jma_rising[1]
+bool jma_shortCondition = use_jma and not jma_rising and jma_rising[1]
+alertcondition(jma_longCondition, title="⚜️JMA: Long Entry", message="⚜️JMA: Long Entry Signal Detected!")
+alertcondition(jma_shortCondition, title="⚜️JMA: Short Entry", message="⚜️JMA: Short Entry Signal Detected!")
+
+// 3) ALMA Alerts
+// ALMA가 상승하기 시작(Long) 또는 하락하기 시작(Short)할 때 알람 발생
+bool alma_rising = alma_val >= alma_val[1]
+bool alma_longCondition = use_alma and alma_rising and not alma_rising[1]
+bool alma_shortCondition = use_alma and not alma_rising and alma_rising[1]
+alertcondition(alma_longCondition, title="⚜️ALMA: Long Entry", message="⚜️ALMA: Long Entry Signal Detected!")
+alertcondition(alma_shortCondition, title="⚜️ALMA: Short Entry", message="⚜️ALMA: Short Entry Signal Detected!")
+
+// 4) Range Filter Alerts
+// Range Filter의 Long/Short 신호(이미 계산됨) 사용
+alertcondition(use_rf and rf_isLong, title="⚜️Range Filter: Long Entry", message="⚜️Range Filter: Long Entry Signal Detected!")
+alertcondition(use_rf and rf_isShort, title="⚜️Range Filter: Short Entry", message="⚜️Range Filter: Short Entry Signal Detected!")
+
+
+// 추천 이모지콘
+// 👑 (왕관 - 최고, 마스터) 💎 (다이아몬드 - 견고함, 가치) ⚜️ (플뢰르 드 리스 - 클래식한 고급스러움)
+// 🏆 (트로피 - 승리, 1위) 2. 추세 & 상승 느낌 🚀 (로켓 - 강력한 추세) 📈 (차트 상승 - 직관적)
+// 🌊 (파도 - 흐름, 웨이브) 3. 정확도 & 핵심 느낌 🎯 (조준 - 정확한 타점) ⚡ (번개 - 빠른 반응)
+// 💠 (다이아몬드 도트 - 통합된 시스템 느낌)
