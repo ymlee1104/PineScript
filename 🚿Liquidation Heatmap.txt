@@ -1,31 +1,33 @@
 //@version=6
-indicator("🚿Liquidation Heatmap [Final Polish]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=100)
+indicator("🚿Liquidation Heatmap [Offset Added]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=100)
 
 // =============================================================================
 // 1. INPUTS & CONFIG
 // =============================================================================
-liq_grpDisp     = "Liquidation Heatmap: General"
+liq_grpDisp     = "Liquidation Heatmap: On/Off switch"
 liq_showInd     = input.bool(true, "On/Off", inline='sw', group=liq_grpDisp, tooltip="지표 켜기/끄기")
 liq_keepTouch   = input.bool(false, "뚫린 Pockets 유지", inline='sw', group=liq_grpDisp)
 liq_showScale   = input.bool(false, "Show Scale", inline='sw', group=liq_grpDisp)
 
-liq_grpLogic    = "Liquidation Heatmap: Logic"
+liq_grpLogic    = "Liquidation Heatmap: Calculation Logic"
 liq_wMode       = input.string("Vol x Range", "소스", options=["Volume", "Range", "Vol x Range"], inline='liq_hm0', group=liq_grpLogic)
 liq_lookback    = input.int(400, "길이", minval=100, maxval=1200, inline='liq_hm0', group=liq_grpLogic)
 liq_minW        = input.float(0.0, "표시강도(M)", minval=0.0, step=0.1, inline='liq_hm0', group=liq_grpLogic) * 1000000
 
-liq_extUnhit    = input.int(5, "Bar Extension", minval=0, inline='liq_hm1', group=liq_grpLogic)
+liq_extUnhit    = input.int(0, "Bar Extension", minval=0, inline='liq_hm1', group=liq_grpLogic)
 liq_mergeDist   = input.float(0.25, "Label Merge %", minval=0.0, step=0.01, inline='liq_hm1', group=liq_grpLogic, tooltip="이 값(가격%)보다 가깝게 위치한 레이블들을 하나로 합칩니다.")
+
 liq_pivW        = input.int(1, "1st Swing Width", minval=1, maxval=10, inline='liq_hm2', group=liq_grpLogic)
-liq_secSwing    = input.int(1, "2nd Swing Width", minval=0, maxval=10, inline='liq_hm2', group=liq_grpLogic)
+liq_secSwing    = input.int(0, "2nd Swing Width", minval=0, maxval=10, inline='liq_hm2', group=liq_grpLogic, tooltip="단기 파동(1st)과 별도로 중장기 관점의 큰 유동성 구간을 동시에 포착합니다. 서로 다른 기간을 설정하여 이중으로 지지/저항을 확인하거나, 0으로 설정하여 비활성화할 수 있습니다.")
 liq_atrLen      = input.int(3, "ATR Period", minval=1, inline='liq_hm3', group=liq_grpLogic)
 liq_atrPct      = input.float(1.5, "ATR Band (%)", minval=0.1, maxval=10.0, step=0.1, inline='liq_hm3', group=liq_grpLogic)/10
 
-liq_grpStyle    = "Liquidation Heatmap: Style"
+liq_grpStyle    = "Liquidation Heatmap: Box and Label Styles"
 liq_touchT      = input.int(90, "뚫린Pockets 투명도", minval=0, maxval=100, inline='liq_tp', group=liq_grpStyle)
 liq_contrast    = input.float(0.7, "Heat Contrast", minval=0.1, maxval=1.0, step=0.1, inline='liq_tp', group=liq_grpStyle)
 liq_colLong     = input.color(color.rgb(1, 254, 212), "Long Color", inline='liq_co', group=liq_grpStyle)
 liq_colShort    = input.color(color.rgb(254, 0, 220), "Short Color", inline='liq_co', group=liq_grpStyle)
+liq_offsetPct   = input.float(0.05, "Offset (%)", minval=0.0, step=0.05, inline='liq_co', group=liq_grpStyle, tooltip="피봇(꼬리)보다 이 비율만큼 바깥쪽에 박스를 생성합니다. (실제 스탑로스 위치 추정)")
 
 // =============================================================================
 // 2. GLOBALS & ARRAYS
@@ -110,7 +112,7 @@ liq_drawScale(minVal, maxVal) =>
     else
         table.clear(liq_scaleTbl, 0, 0, 0, 23)
 
-liq_checkAndAdd(pW, srcSeries, minW, bandVal, vMin, vMax) =>
+liq_checkAndAdd(pW, srcSeries, minW, bandVal, vMin, vMax, offsetPct) =>
     pH = ta.pivothigh(high, pW, pW)
     pL = ta.pivotlow(low, pW, pW)
     pBar = bar_index - pW
@@ -118,9 +120,13 @@ liq_checkAndAdd(pW, srcSeries, minW, bandVal, vMin, vMax) =>
     
     if not na(w) and w >= minW
         if not na(pH)
-            liq_addPocket(pH + bandVal, pH, -1, w, pBar, time[pW], vMin, vMax)
+            // [오프셋 적용] High보다 설정된 %만큼 위에서 시작
+            baseH = pH * (1 + offsetPct / 100)
+            liq_addPocket(baseH + bandVal, baseH, -1, w, pBar, time[pW], vMin, vMax)
         if not na(pL)
-            liq_addPocket(pL, pL - bandVal, 1, w, pBar, time[pW], vMin, vMax)
+            // [오프셋 적용] Low보다 설정된 %만큼 아래에서 시작
+            baseL = pL * (1 - offsetPct / 100)
+            liq_addPocket(baseL, baseL - bandVal, 1, w, pBar, time[pW], vMin, vMax)
 
 // =============================================================================
 // 4. MAIN LOGIC
@@ -142,18 +148,17 @@ if liq_showInd
     liq_band = ta.atr(liq_atrLen) * liq_atrPct
 
     // -------------------------------------------------------------------------
-    // B. 새로운 포켓 생성 확인
+    // B. 새로운 포켓 생성 확인 (오프셋 변수 전달)
     // -------------------------------------------------------------------------
-    liq_checkAndAdd(liq_pivW, liq_liqM, liq_minW, liq_band, liq_vMin, liq_vMax)
+    liq_checkAndAdd(liq_pivW, liq_liqM, liq_minW, liq_band, liq_vMin, liq_vMax, liq_offsetPct)
     
     if liq_secSwing > 0
-        liq_checkAndAdd(liq_secSwing, liq_liqM, liq_minW, liq_band, liq_vMin, liq_vMax)
+        liq_checkAndAdd(liq_secSwing, liq_liqM, liq_minW, liq_band, liq_vMin, liq_vMax, liq_offsetPct)
 
     // -------------------------------------------------------------------------
     // C. 기존 포켓 업데이트
     // -------------------------------------------------------------------------
     int liq_i = 0
-    // [수정됨] 투명도를 Opacity로 반전시키지 않고, 투명도 값 그대로 사용 (90% 투명 = 매우 옅음)
     float tBorderVal = liq_touchT
     
     while liq_i < array.size(liq_pockets)
@@ -220,7 +225,6 @@ if liq_showInd
             b.set_bgcolor(col)
             b.set_border_color(na)
         else
-            // [수정됨] 테두리와 배경 모두 설정된 투명도(liq_touchT)를 따르도록 통일
             baseCol = liq_calcColor(w, s, liq_vMin, liq_vMax)
             faded   = color.new(baseCol, liq_touchT)
             border  = color.new(baseCol, tBorderVal)
