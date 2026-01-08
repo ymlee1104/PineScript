@@ -1,5 +1,5 @@
 //@version=6
-indicator("🚿Liquidation Heatmap", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=100)
+indicator("🚿Liquidation Heatmap [Custom Scale & Fix]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=100)
 
 // =============================================================================
 // 1. INPUTS & CONFIG
@@ -12,27 +12,28 @@ liq_showScale   = input.bool(false, "Show Scale", inline='sw', group=liq_grpDisp
 liq_grpLogic    = "Liquidation Heatmap: Calculation Logic"
 liq_wMode       = input.string("Vol x Range", "소스", options=["Volume", "Range", "Vol x Range"], inline='liq_hm0', group=liq_grpLogic)
 liq_lookback    = input.int(400, "길이", minval=100, maxval=1200, inline='liq_hm0', group=liq_grpLogic)
-liq_minW        = input.float(0.1, "표시강도(M)", minval=0.0, step=0.1, inline='liq_hm0', group=liq_grpLogic) * 1000000
+liq_minW        = input.float(0.5, "표시강도(M)", minval=0.0, step=0.1, inline='liq_hm0', group=liq_grpLogic) * 1000000
 
 liq_extUnhit    = input.int(0, "Bar Extension", minval=0, inline='liq_hm1', group=liq_grpLogic)
-liq_mergeDist   = input.float(0.05, "Label Merge %", minval=0.0, step=0.01, inline='liq_hm1', group=liq_grpLogic, tooltip="이 값(가격%)보다 가깝게 위치한 레이블들을 하나로 합칩니다.")
+liq_mergeDist   = input.float(0.09, "Label Merge %", minval=0.0, step=0.01, inline='liq_hm1', group=liq_grpLogic, tooltip="이 값(가격%)보다 가깝게 위치한 레이블들을 하나로 합칩니다.")
 
 liq_pivW        = input.int(1, "1st Swing Width", minval=1, maxval=10, inline='liq_hm2', group=liq_grpLogic)
-liq_secSwing    = input.int(0, "2nd Swing Width", minval=0, maxval=10, inline='liq_hm2', group=liq_grpLogic)
+liq_secSwing    = input.int(1, "2nd Swing Width", minval=0, maxval=10, inline='liq_hm2', group=liq_grpLogic, tooltip="0으로 설정하면 비활성화됩니다. 1st Swing과 같은 값을 넣으면 중복 계산 방지를 위해 자동으로 무시됩니다.")
 liq_atrLen      = input.int(1440, "ATR Period", minval=1, inline='liq_hm3', group=liq_grpLogic)
 liq_atrPct      = input.float(1.9, "ATR Band (%)", minval=0.1, maxval=10.0, step=0.1, inline='liq_hm3', group=liq_grpLogic)/10
 
 // [색상 스케일 수동 조절]
 liq_grpStyle    = "Liquidation Heatmap: Box and Label Styles"
 liq_grpScale    = "Liquidation Heatmap: Color Scale Adjustment"
-liq_useManScale = input.bool(true, "Use Custom Scale", inline='liq_tp0', group=liq_grpStyle, tooltip="켜면 아래 설정한 Min/Max 값을 그라데이션 기준으로 사용합니다.\n(이때 Heat Contrast는 자동으로 1.0으로 고정됩니다)")
-liq_manMax      = input.float(1.5, "Max(M)", step=0.1, inline='liq_tp0', group=liq_grpStyle, tooltip="이 값 이상은 모두 최대 진한 색으로 표시") * 1000000
-liq_manMin      = input.float(0.0, "Min(M)", step=0.1, inline='liq_tp0', group=liq_grpStyle, tooltip="이 값 이하는 가장 연한 색으로 시작") * 1000000
+liq_useManScale = input.bool(true, "Use Custom Scale", inline='liq_tp0', group=liq_grpScale, tooltip="켜면 아래 설정한 Min/Max 값을 그라데이션 기준으로 사용합니다.\n(이때 Heat Contrast는 자동으로 1.0으로 고정됩니다)")
+liq_manMax      = input.float(15.0, "Max(M)", step=0.1, inline='liq_tp0', group=liq_grpScale, tooltip="이 값 이상은 모두 최대 진한 색으로 표시") * 1000000
+liq_manMin      = input.float(0.0, "Min(M)", step=0.1, inline='liq_tp0', group=liq_grpScale, tooltip="이 값 이하는 가장 연한 색으로 시작") * 1000000
+
 liq_touchT      = input.int(90, "뚫린Pockets 투명도", minval=0, maxval=100, inline='liq_tp', group=liq_grpStyle)
 liq_contrast    = input.float(0.1, "Heat Contrast", minval=0.1, maxval=1.0, step=0.1, inline='liq_tp', group=liq_grpStyle, tooltip="자동 스케일일 때만 적용됩니다. Custom Scale 사용 시 선형(1.0)으로 고정됩니다.")
 liq_colLong     = input.color(color.rgb(1, 254, 212), "Long Color", inline='liq_co', group=liq_grpStyle)
 liq_colShort    = input.color(color.rgb(254, 0, 220), "Short Color", inline='liq_co', group=liq_grpStyle)
-liq_offsetPct   = input.float(0.0, "Offset (%)", minval=0.0, step=0.01, inline='liq_co', group=liq_grpStyle)
+liq_offsetPct   = input.float(0.00, "Offset (%)", minval=0.0, step=0.05, inline='liq_co', group=liq_grpStyle)
 
 // =============================================================================
 // 2. GLOBALS & ARRAYS
@@ -71,15 +72,13 @@ f_fmtVol(val) =>
 liq_calcColor(w, side, vMin, vMax) =>
     base = side == 1 ? liq_colLong : liq_colShort
     
-    // [수정 1] Max가 Min보다 작거나 같아 분모가 0이 되는 현상 방지
-    // vMax와 vMin이 같다면, 해당 값 이상은 무조건 100% 진하기로 표시
+    // Max가 Min보다 작거나 같아 분모가 0이 되는 현상 방지
     safeMax = math.max(vMax, vMin + 1.0) 
     rng     = safeMax - vMin
     
     norm = rng != 0 ? math.max(0.0, math.min((w - vMin) / rng, 1.0)) : 0.0
     
-    // [수정 2] Custom Scale 사용 시, Heat Contrast(0.1 등)가 그라데이션을 망치므로
-    // 강제로 1.0(선형)을 적용하여 부드러운 그라데이션을 만듦.
+    // Custom Scale 사용 시 강제 선형(1.0)
     effContrast = liq_useManScale ? 1.0 : liq_contrast
     
     adj  = math.pow(norm, effContrast)
@@ -116,10 +115,7 @@ liq_drawScale(minVal, maxVal) =>
     if liq_showScale and barstate.islast
         table.cell(liq_scaleTbl, 0, 0, "Max\n" + f_fmtVol(maxVal), text_color=color.white, bgcolor=color.new(color.black, 80), text_size=size.small)
         for i = 1 to 22
-            // 스케일 바에도 동일한 Contrast 로직 적용 (Custom시 선형)
             effC = liq_useManScale ? 1.0 : liq_contrast
-            gradPos = math.pow((i - 1) / 21.0, effC) // 역산 필요하지만 단순화
-            // 단순 시각화를 위해 선형으로 그림 (혼동 방지)
             col = color.from_gradient(i - 1, 0, 21, color.new(liq_colShort, 5), color.new(liq_colLong, 5))
             table.cell(liq_scaleTbl, 0, i, "", bgcolor=col, height=1.5)
         table.cell(liq_scaleTbl, 0, 23, "Min\n" + f_fmtVol(minVal), text_color=color.white, bgcolor=color.new(color.black, 80), text_size=size.small)
@@ -160,9 +156,11 @@ if liq_showInd
     
     liq_band = ta.atr(liq_atrLen) * liq_atrPct
 
+    // [1st Swing]
     liq_checkAndAdd(liq_pivW, liq_liqM, liq_minW, liq_band, liq_vMin, liq_vMax, liq_offsetPct)
     
-    if liq_secSwing > 0
+    // [2nd Swing 수정] 1st Swing과 값이 다를 때만 실행하여 중복(Double counting) 방지
+    if liq_secSwing > 0 and liq_secSwing != liq_pivW
         liq_checkAndAdd(liq_secSwing, liq_liqM, liq_minW, liq_band, liq_vMin, liq_vMax, liq_offsetPct)
 
     int liq_i = 0
@@ -223,7 +221,6 @@ if liq_showInd
         w = array.get(liq_pW, liq_i)
         s = array.get(liq_pSide, liq_i)
         
-        // [중요] 함수 호출 시 업데이트된 로직(선형 Contrast) 적용됨
         if not array.get(liq_pHit, liq_i)
             col = liq_calcColor(w, s, liq_vMin, liq_vMax)
             b.set_bgcolor(col)
