@@ -1,0 +1,380 @@
+//@version=6
+indicator("🚿Liquidation Heatmap", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=100)
+
+// =============================================================================
+// 1. INPUTS & CONFIG
+// =============================================================================
+liq_grpDisp     = "Liquidation Heatmap: On/Off switch"
+liq_showInd     = input.bool(true, "On/Off", inline='sw', group=liq_grpDisp, tooltip="지표 켜기/끄기")
+liq_keepTouch   = input.bool(false, "뚫린 Pockets 유지", inline='sw', group=liq_grpDisp)
+liq_showScale   = input.bool(false, "Show Scale", inline='sw', group=liq_grpDisp)
+
+liq_grpLogic    = "Liquidation Heatmap: Calculation Logic"
+liq_wMode       = input.string("Vol x Range", "소스", options=["Volume", "Range", "Vol x Range"], inline='liq_hm0', group=liq_grpLogic)
+liq_lookback    = input.int(400, "길이", minval=100, maxval=1200, inline='liq_hm0', group=liq_grpLogic)
+liq_minW        = input.float(0.1, "표시강도(M)", minval=0.0, step=0.1, inline='liq_hm0', group=liq_grpLogic) * 1000000
+
+liq_extUnhit    = input.int(0, "Bar Extension", minval=0, inline='liq_hm1', group=liq_grpLogic)
+liq_mergeDist   = input.float(0.05, "Label Merge %", minval=0.0, step=0.01, inline='liq_hm1', group=liq_grpLogic, tooltip="이 값(가격%)보다 가깝게 위치한 레이블들을 하나로 합칩니다.")
+
+liq_pivW        = input.int(1, "1st Swing Width", minval=1, maxval=10, inline='liq_hm2', group=liq_grpLogic)
+liq_secSwing    = input.int(0, "2nd Swing Width", minval=0, maxval=10, inline='liq_hm2', group=liq_grpLogic)
+liq_atrLen      = input.int(1440, "ATR Period", minval=1, inline='liq_hm3', group=liq_grpLogic)
+liq_atrPct      = input.float(1.9, "ATR Band (%)", minval=0.1, maxval=10.0, step=0.1, inline='liq_hm3', group=liq_grpLogic)/10
+
+// [색상 스케일 수동 조절]
+liq_grpStyle    = "Liquidation Heatmap: Box and Label Styles"
+liq_grpScale    = "Liquidation Heatmap: Color Scale Adjustment"
+liq_useManScale = input.bool(true, "Use Custom Scale", inline='liq_tp0', group=liq_grpStyle, tooltip="켜면 아래 설정한 Min/Max 값을 그라데이션 기준으로 사용합니다.\n(이때 Heat Contrast는 자동으로 1.0으로 고정됩니다)")
+liq_manMax      = input.float(1.5, "Max(M)", step=0.1, inline='liq_tp0', group=liq_grpStyle, tooltip="이 값 이상은 모두 최대 진한 색으로 표시") * 1000000
+liq_manMin      = input.float(0.0, "Min(M)", step=0.1, inline='liq_tp0', group=liq_grpStyle, tooltip="이 값 이하는 가장 연한 색으로 시작") * 1000000
+liq_touchT      = input.int(90, "뚫린Pockets 투명도", minval=0, maxval=100, inline='liq_tp', group=liq_grpStyle)
+liq_contrast    = input.float(0.1, "Heat Contrast", minval=0.1, maxval=1.0, step=0.1, inline='liq_tp', group=liq_grpStyle, tooltip="자동 스케일일 때만 적용됩니다. Custom Scale 사용 시 선형(1.0)으로 고정됩니다.")
+liq_colLong     = input.color(color.rgb(1, 254, 212), "Long Color", inline='liq_co', group=liq_grpStyle)
+liq_colShort    = input.color(color.rgb(254, 0, 220), "Short Color", inline='liq_co', group=liq_grpStyle)
+liq_offsetPct   = input.float(0.0, "Offset (%)", minval=0.0, step=0.01, inline='liq_co', group=liq_grpStyle)
+
+// =============================================================================
+// 2. GLOBALS & ARRAYS
+// =============================================================================
+var box[]   liq_pockets     = array.new<box>()
+var int[]   liq_pSide       = array.new<int>()      
+var bool[]  liq_pHit        = array.new<bool>()
+var float[] liq_pW          = array.new<float>()
+var bool[]  liq_pFrozen     = array.new<bool>()  
+var int[]   liq_pLeft       = array.new<int>()     
+var int[]   liq_pLTime      = array.new<int>()  
+var float[] liq_pTop        = array.new<float>()
+var float[] liq_pBot        = array.new<float>()
+var int[]   liq_pRTime      = array.new<int>() 
+
+var table   liq_scaleTbl    = table.new(position.middle_right, 1, 24)
+var label[] liq_activeLabels = array.new<label>()
+var box[]   liq_mergedBoxes  = array.new<box>() 
+
+// =============================================================================
+// 3. FUNCTIONS
+// =============================================================================
+
+f_fmtVol(val) =>
+    string res = ""
+    if val >= 1000000000
+        res := str.tostring(val / 1000000000, "#,###.#") + "B"
+    else if val >= 1000000
+        res := str.tostring(val / 1000000, "#,###.#") + "M"
+    else if val >= 1000
+        res := str.tostring(val / 1000, "#,###.#") + "K"
+    else
+        res := str.tostring(val, "#,###.#")
+    res
+
+liq_calcColor(w, side, vMin, vMax) =>
+    base = side == 1 ? liq_colLong : liq_colShort
+    
+    // [수정 1] Max가 Min보다 작거나 같아 분모가 0이 되는 현상 방지
+    // vMax와 vMin이 같다면, 해당 값 이상은 무조건 100% 진하기로 표시
+    safeMax = math.max(vMax, vMin + 1.0) 
+    rng     = safeMax - vMin
+    
+    norm = rng != 0 ? math.max(0.0, math.min((w - vMin) / rng, 1.0)) : 0.0
+    
+    // [수정 2] Custom Scale 사용 시, Heat Contrast(0.1 등)가 그라데이션을 망치므로
+    // 강제로 1.0(선형)을 적용하여 부드러운 그라데이션을 만듦.
+    effContrast = liq_useManScale ? 1.0 : liq_contrast
+    
+    adj  = math.pow(norm, effContrast)
+    color.from_gradient(adj, 0.0, 1.0, color.new(base, 90), color.new(base, 0))
+
+liq_addPocket(top, bot, side, w, pBar, pTime, vMin, vMax) =>
+    c = liq_calcColor(w, side, vMin, vMax)
+    b = box.new(pTime, top, time, bot, bgcolor=c, border_color=na, xloc=xloc.bar_time)
+    
+    array.push(liq_pockets, b)
+    array.push(liq_pSide, side)
+    array.push(liq_pHit, false)
+    array.push(liq_pW, w)
+    array.push(liq_pFrozen, false)
+    array.push(liq_pLeft, pBar)
+    array.push(liq_pLTime, pTime)
+    array.push(liq_pTop, top)
+    array.push(liq_pBot, bot)
+    array.push(liq_pRTime, na)
+    
+    if array.size(liq_pockets) > liq_lookback
+        box.delete(array.shift(liq_pockets))
+        array.shift(liq_pSide)
+        array.shift(liq_pHit)
+        array.shift(liq_pW)
+        array.shift(liq_pFrozen)
+        array.shift(liq_pLeft)
+        array.shift(liq_pLTime)
+        array.shift(liq_pTop)
+        array.shift(liq_pBot)
+        array.shift(liq_pRTime)
+
+liq_drawScale(minVal, maxVal) =>
+    if liq_showScale and barstate.islast
+        table.cell(liq_scaleTbl, 0, 0, "Max\n" + f_fmtVol(maxVal), text_color=color.white, bgcolor=color.new(color.black, 80), text_size=size.small)
+        for i = 1 to 22
+            // 스케일 바에도 동일한 Contrast 로직 적용 (Custom시 선형)
+            effC = liq_useManScale ? 1.0 : liq_contrast
+            gradPos = math.pow((i - 1) / 21.0, effC) // 역산 필요하지만 단순화
+            // 단순 시각화를 위해 선형으로 그림 (혼동 방지)
+            col = color.from_gradient(i - 1, 0, 21, color.new(liq_colShort, 5), color.new(liq_colLong, 5))
+            table.cell(liq_scaleTbl, 0, i, "", bgcolor=col, height=1.5)
+        table.cell(liq_scaleTbl, 0, 23, "Min\n" + f_fmtVol(minVal), text_color=color.white, bgcolor=color.new(color.black, 80), text_size=size.small)
+    else
+        table.clear(liq_scaleTbl, 0, 0, 0, 23)
+
+liq_checkAndAdd(pW, srcSeries, minW, bandVal, vMin, vMax, offsetPct) =>
+    pH = ta.pivothigh(high, pW, pW)
+    pL = ta.pivotlow(low, pW, pW)
+    pBar = bar_index - pW
+    w    = srcSeries[pW]
+    
+    if not na(w) and w >= minW
+        if not na(pH)
+            baseH = pH * (1 + offsetPct / 100)
+            liq_addPocket(baseH + bandVal, baseH, -1, w, pBar, time[pW], vMin, vMax)
+        if not na(pL)
+            baseL = pL * (1 - offsetPct / 100)
+            liq_addPocket(baseL, baseL - bandVal, 1, w, pBar, time[pW], vMin, vMax)
+
+// =============================================================================
+// 4. MAIN LOGIC
+// =============================================================================
+if liq_showInd
+    liq_rangeM = (high - low) * 100.0
+    liq_volM   = ta.cum(volume) <= 1 ? liq_rangeM : volume
+    liq_liqM   = switch liq_wMode
+        "Range"       => liq_rangeM
+        "Vol x Range" => liq_volM * liq_rangeM
+        => liq_volM
+    
+    auto_vMax = nz(ta.highest(liq_liqM, liq_lookback), liq_liqM)
+    auto_vMin = nz(ta.lowest(liq_liqM, liq_lookback), liq_liqM)
+    auto_vMin := auto_vMin == auto_vMax ? auto_vMin * 0.9 : auto_vMin
+
+    liq_vMax = liq_useManScale ? liq_manMax : auto_vMax
+    liq_vMin = liq_useManScale ? liq_manMin : auto_vMin
+    
+    liq_band = ta.atr(liq_atrLen) * liq_atrPct
+
+    liq_checkAndAdd(liq_pivW, liq_liqM, liq_minW, liq_band, liq_vMin, liq_vMax, liq_offsetPct)
+    
+    if liq_secSwing > 0
+        liq_checkAndAdd(liq_secSwing, liq_liqM, liq_minW, liq_band, liq_vMin, liq_vMax, liq_offsetPct)
+
+    int liq_i = 0
+    float tBorderVal = liq_touchT
+    
+    while liq_i < array.size(liq_pockets)
+        b        = array.get(liq_pockets, liq_i)
+        isHit    = array.get(liq_pHit, liq_i)
+        isFrozen = array.get(liq_pFrozen, liq_i)
+        
+        if not isFrozen
+            b.set_left(array.get(liq_pLTime, liq_i))
+            b.set_top(array.get(liq_pTop, liq_i))
+            b.set_bottom(array.get(liq_pBot, liq_i))
+            b.set_right(time + nz(time - time[1], 0) * liq_extUnhit)
+        else
+            b.set_right(array.get(liq_pRTime, liq_i))
+
+        if bar_index - array.get(liq_pLeft, liq_i) > liq_lookback
+            b.delete()
+            array.remove(liq_pockets, liq_i)
+            array.remove(liq_pSide, liq_i)
+            array.remove(liq_pHit, liq_i)
+            array.remove(liq_pW, liq_i)
+            array.remove(liq_pFrozen, liq_i)
+            array.remove(liq_pLeft, liq_i)
+            array.remove(liq_pLTime, liq_i)
+            array.remove(liq_pTop, liq_i)
+            array.remove(liq_pBot, liq_i)
+            array.remove(liq_pRTime, liq_i)
+            continue 
+
+        if not isHit and not isFrozen
+            mid = (b.get_top() + b.get_bottom()) * 0.5
+            s    = array.get(liq_pSide, liq_i)
+            bool isTouched = (s == 1 and low <= mid) or (s == -1 and high >= mid)
+
+            if isTouched
+                if liq_keepTouch
+                    array.set(liq_pHit, liq_i, true)
+                    array.set(liq_pFrozen, liq_i, true)
+                    array.set(liq_pRTime, liq_i, time)
+                    b.set_right(time)
+                else
+                    b.delete()
+                    array.remove(liq_pockets, liq_i)
+                    array.remove(liq_pSide, liq_i)
+                    array.remove(liq_pHit, liq_i)
+                    array.remove(liq_pW, liq_i)
+                    array.remove(liq_pFrozen, liq_i)
+                    array.remove(liq_pLeft, liq_i)
+                    array.remove(liq_pLTime, liq_i)
+                    array.remove(liq_pTop, liq_i)
+                    array.remove(liq_pBot, liq_i)
+                    array.remove(liq_pRTime, liq_i)
+                    continue
+
+        w = array.get(liq_pW, liq_i)
+        s = array.get(liq_pSide, liq_i)
+        
+        // [중요] 함수 호출 시 업데이트된 로직(선형 Contrast) 적용됨
+        if not array.get(liq_pHit, liq_i)
+            col = liq_calcColor(w, s, liq_vMin, liq_vMax)
+            b.set_bgcolor(col)
+            b.set_border_color(na)
+        else
+            baseCol = liq_calcColor(w, s, liq_vMin, liq_vMax)
+            faded   = color.new(baseCol, liq_touchT)
+            border  = color.new(baseCol, tBorderVal)
+            b.set_border_color(border)
+            b.set_bgcolor(faded)
+
+        liq_i += 1
+    
+    liq_drawScale(liq_vMin, liq_vMax)
+
+    if barstate.islast
+        if array.size(liq_activeLabels) > 0
+            for lbl in liq_activeLabels
+                lbl.delete()
+            array.clear(liq_activeLabels)
+            
+        if array.size(liq_mergedBoxes) > 0
+            for b in liq_mergedBoxes
+                box.delete(b)
+            array.clear(liq_mergedBoxes)
+            
+        float[] _yList   = array.new<float>()
+        float[] _wList   = array.new<float>()
+        int[]   _sList   = array.new<int>()
+        float[] _topList = array.new<float>()
+        float[] _botList = array.new<float>()
+        int[]   _idList  = array.new<int>() 
+        
+        for i = 0 to array.size(liq_pockets) - 1
+            if not array.get(liq_pHit, i)
+                top = array.get(liq_pTop, i)
+                bot = array.get(liq_pBot, i)
+                mid = (top + bot) / 2
+                array.push(_yList, mid)
+                array.push(_wList, array.get(liq_pW, i))
+                array.push(_sList, array.get(liq_pSide, i))
+                array.push(_topList, top)
+                array.push(_botList, bot)
+                array.push(_idList, i)
+
+        int[] _indices = array.sort_indices(_yList)
+        
+        float[] _finalY   = array.new<float>()
+        float[] _finalW   = array.new<float>()
+        int[]   _finalS   = array.new<int>()
+        float[] _finalTop = array.new<float>()
+        float[] _finalBot = array.new<float>()
+        string[] _finalIdxStr = array.new<string>()
+        
+        if array.size(_indices) > 0
+            int firstIdx = array.get(_indices, 0)
+            array.push(_finalY, array.get(_yList, firstIdx))
+            array.push(_finalW, array.get(_wList, firstIdx))
+            array.push(_finalS, array.get(_sList, firstIdx))
+            array.push(_finalTop, array.get(_topList, firstIdx))
+            array.push(_finalBot, array.get(_botList, firstIdx))
+            array.push(_finalIdxStr, str.tostring(array.get(_idList, firstIdx)))
+            
+            for k = 1 to array.size(_indices) - 1
+                idx     = array.get(_indices, k)
+                curY    = array.get(_yList, idx)
+                curW    = array.get(_wList, idx)
+                curSide = array.get(_sList, idx)
+                curTop  = array.get(_topList, idx)
+                curBot  = array.get(_botList, idx)
+                curRealIdx = array.get(_idList, idx)
+                
+                lastIdxInFinal = array.size(_finalY) - 1
+                lastY          = array.get(_finalY, lastIdxInFinal)
+                
+                distPct = math.abs(curY - lastY) / close * 100
+                
+                if distPct <= liq_mergeDist
+                    prevW = array.get(_finalW, lastIdxInFinal)
+                    newW  = prevW + curW
+                    array.set(_finalW, lastIdxInFinal, newW)
+                    
+                    newY = ((lastY * prevW) + (curY * curW)) / newW
+                    array.set(_finalY, lastIdxInFinal, newY)
+                    
+                    prevTop = array.get(_finalTop, lastIdxInFinal)
+                    prevBot = array.get(_finalBot, lastIdxInFinal)
+                    array.set(_finalTop, lastIdxInFinal, math.max(prevTop, curTop))
+                    array.set(_finalBot, lastIdxInFinal, math.min(prevBot, curBot))
+                    
+                    prevStr = array.get(_finalIdxStr, lastIdxInFinal)
+                    array.set(_finalIdxStr, lastIdxInFinal, prevStr + "," + str.tostring(curRealIdx))
+                    
+                    if curW > prevW
+                        array.set(_finalS, lastIdxInFinal, curSide)
+                else
+                    array.push(_finalY, curY)
+                    array.push(_finalW, curW)
+                    array.push(_finalS, curSide)
+                    array.push(_finalTop, curTop)
+                    array.push(_finalBot, curBot)
+                    array.push(_finalIdxStr, str.tostring(curRealIdx))
+
+        if array.size(_finalY) > 0
+            for k = 0 to array.size(_finalY) - 1
+                fY   = array.get(_finalY, k)
+                fW   = array.get(_finalW, k)
+                fS   = array.get(_finalS, k)
+                fTop = array.get(_finalTop, k)
+                fBot = array.get(_finalBot, k)
+                fIds = array.get(_finalIdxStr, k)
+                
+                col = liq_calcColor(fW, fS, liq_vMin, liq_vMax)
+                
+                lx = time + nz(time - time[1], 0) * (liq_extUnhit + 1)
+                mb = box.new(time, fTop, lx, fBot, xloc=xloc.bar_time, border_color=na, bgcolor=col)
+                array.push(liq_mergedBoxes, mb)
+                
+                idArr = str.split(fIds, ",")
+                for idStr in idArr
+                    realIdx = int(str.tonumber(idStr))
+                    originalBox = array.get(liq_pockets, realIdx)
+                    box.set_right(originalBox, time)
+
+                txt = f_fmtVol(fW)
+                lbl = label.new(lx, fY, txt, xloc=xloc.bar_time, yloc=yloc.price, color=col, style=label.style_label_left, textcolor=color.white, size=size.normal)
+                array.push(liq_activeLabels, lbl)
+
+else
+    if array.size(liq_pockets) > 0
+        for i = 0 to array.size(liq_pockets) - 1
+            box.delete(array.get(liq_pockets, i))
+        array.clear(liq_pockets)
+        array.clear(liq_pSide)
+        array.clear(liq_pHit)
+        array.clear(liq_pW)
+        array.clear(liq_pFrozen)
+        array.clear(liq_pLeft)
+        array.clear(liq_pLTime)
+        array.clear(liq_pTop)
+        array.clear(liq_pBot)
+        array.clear(liq_pRTime)
+        
+        table.clear(liq_scaleTbl, 0, 0, 0, 23)
+        
+        if array.size(liq_activeLabels) > 0
+            for lbl in liq_activeLabels
+                lbl.delete()
+            array.clear(liq_activeLabels)
+            
+        if array.size(liq_mergedBoxes) > 0
+            for b in liq_mergedBoxes
+                box.delete(b)
+            array.clear(liq_mergedBoxes)
