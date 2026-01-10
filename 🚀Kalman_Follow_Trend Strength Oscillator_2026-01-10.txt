@@ -1,0 +1,548 @@
+//@version=6
+indicator('🚀Kalman_Follow_Trend Strength Oscillator', shorttitle='🚀KAL_FL', overlay = false, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// 시작-종료
+grp_time        = "시작일-종료일 범위"
+start_time      = input.time(timestamp("2026-01-01 00:00 +0900"), '시작일', inline='t2', group=grp_time)
+end_time        = input.time(timestamp("2099-12-31 00:00 +0900"), '종료일', inline='t2', group=grp_time)
+inDate          = time >= start_time and time <= end_time
+
+// ======================================================
+// 1. Switch Settings (기능 스위치)
+// ======================================================
+grp_sw = 'Show Switch'
+useZZ  = input.bool(true, "Zig Zag 사용 ⇛|", inline='sw', group=grp_sw)
+
+// ======================================================
+// 2. Zig Zag Settings
+// ======================================================
+grp_zig = 'Zig Zag Settings'
+dev     = input.float(0.7, "ZigZag(%)", step=0.1, inline='zig', group=grp_zig) / 100
+dep     = input.int(10, "Depth", inline='zig', group=grp_zig)
+zig_col = input.int(75, title='BG 투명도', inline='zig', group=grp_zig)
+
+// ======================================================
+// 3. PO3 HTF Ghost Candle Inputs
+// ======================================================
+grp_htf_ghost     = 'PO3 HTF Ghost Candle'  
+bool   use_po3_tf = input.bool(true, "PO3지표 On/Off", inline='po31', group=grp_htf_ghost)
+string po3_tf     = input.timeframe("15", "HTF", inline='po31', group=grp_htf_ghost)
+int    po3_wp     = input.int(33, "Wick폭(%)", 1, 100, inline='po31', group=grp_htf_ghost)
+bool   po3_sO     = input.bool(true, "시가(Open) 하이라이트", inline='po32', group=grp_htf_ghost)
+bool   po3_showL  = input.bool(false, "가격 라벨", inline='po32', group=grp_htf_ghost)
+int    po3_limit  = input.int(4320, "표시기간(분)", minval = 0, inline='po32', group=grp_htf_ghost, tooltip = "0으로 설정하면 제한 없음")
+
+// ======================================================
+// 4. Kalman Trailing Inputs
+// ======================================================
+km_showsignals  = input.bool(false, title = 'KM Long/Short', inline='sw', group=grp_sw)
+grp_kal     = 'Kalman Filter'
+use_kalman  = input.bool(true, "KALMAN 사용 ⇛|", inline='km', group=grp_kal) 
+tf          = input.timeframe("", "Timeframe", inline='km', group=grp_kal) 
+src         = input(close, "Source", inline='km', group=grp_kal)
+Sharpness   = input.float(1.0, "Sharpness", inline='km', group=grp_kal)
+K           = input.float(1.0, "K", inline='km', group=grp_kal)
+len         = input.int(3, "Fill width", minval=1, inline='km', group=grp_kal)
+
+// ======================================================
+// 5. Follow Line Inputs
+// ======================================================
+fl_showsignals  = input.bool(false, title = 'FL Buy/Sell', inline='sw', group=grp_sw)
+group_FL       = "Follow Line 설정"
+useFL          = input.bool(false, "Follow Line ⇛", inline='fl1', group = group_FL)
+fill_kal_fl    = input.bool(false, "Fill Kalman-Flow line", inline='fl1', group = group_FL) 
+fl_UseATRfilter= input.bool(defval = true, title = 'ATR Filter On/Off', inline='fl1', group = group_FL)
+fl_ATRperiod   = input.int(defval = 5, title = 'ATR길이', minval = 1, inline='fl2', group = group_FL)
+fl_BBperiod    = input.int(defval = 21, title = 'BB길이', minval = 1, inline='fl2', group = group_FL)
+fl_BBdeviation = input.float(defval = 1.00, title = 'BB Deviation', minval = 0.1, step = 0.1, inline='fl2', group = group_FL)
+
+// ======================================================
+// 6. MTF EMA Band Inputs
+// ======================================================
+grp_ema='EMA Band'
+tf_input      = input.timeframe("", "타임프레임 선택", inline='ema1', group=grp_ema) 
+wait_close    = input.bool(true, "Wait for timeframe closes", inline='ema1', group=grp_ema, tooltip="체크 시 해당 타임프레임의 캔들이 마감된 후의 데이터만 참조하여 리페인팅을 방지합니다.")
+show_ema_band = input.bool(false, "EMA Band", inline='ema2', group=grp_ema)
+fast_length   = input.int(12, title='Fast 길이', inline='ema2', group=grp_ema)    
+slow_length   = input.int(24, title='Slow 길이', inline='ema2', group=grp_ema) 
+
+// ======================================================
+// 7. VWMA/SMA Breakout Detector
+// ======================================================
+grp_vwma='VWMA Band'
+use_VWMA    = input.bool(false, "VWMA ⇛", inline='vwma', group=grp_vwma)
+lenSlowVWMA = input.int(7, title = 'VWMA Length', minval = 1, inline='vwma', group=grp_vwma)
+lenSlowSMA  = input.int(30, title = 'SMA Length', minval = 1, inline='vwma', group=grp_vwma)
+
+slowSMA = ta.sma(close, lenSlowSMA)
+slowVWMA = ta.vwma(close, lenSlowVWMA)
+
+
+// ======================================================
+// 8. Kalman Trend Velocity Oscillator
+// ======================================================
+enum kso_kf_model_enum
+    m_std = "Standard"
+    m_vol = "Volume adjusted"
+    m_park = "Parkinson adjusted"
+
+kso_pn_1          = 0.01 // Process Noise 1
+kso_pn_2          = 0.01 // Process Noise 2
+kso_lookback_sigma= 500 // N (Sigma Lookback)
+
+grp_osc           = 'Sub: Oscillator Settings'
+kso_model         = input.enum(kso_kf_model_enum.m_std, "Kalman Model", inline='kmosc1', group=grp_osc)
+kso_src           = input(close, "Kalman Source", inline='kmosc1', group=grp_osc)
+kso_smooth_osc    = input.int(10, "Osc Smoothness", minval=2, inline='kmosc1', group=grp_osc) // R1
+kso_smooth_str    = input.int(10, "Strength Smoothness", minval=2, inline='kmosc1', group=grp_osc) // R2
+kso_lookback_trend= input.int(10, "Trend Lookback", minval=2, inline='kmosc1', group=grp_osc) // N2
+kso_meas_noise    = input.float(500.0, "Measurement Noise", minval=0.0, step=2.0, inline='kmosc1', group=grp_osc)
+
+// Strength Alert Inputs
+kso_alert_upper  = input.int(20, "Long 알람 강도(>=)", inline='kmosc2', group=grp_osc)
+kso_alert_lower  = input.int(-20, "Short 알람 강도(<=)", inline='kmosc2', group=grp_osc)
+
+
+grp_col  = 'Color Settings'
+po3_c1   = input.color(color.new(#02ffff, 80), "PO3 Bull", inline='po3_kal', group=grp_col)
+po3_c2   = input.color(color.new(#f800c2, 75), "PO3 Bear", inline='po3_kal', group=grp_col)
+colKalup = input.color(color.teal, "KalmanBull", inline='po3_kal', group=grp_col)
+colKaldn = input.color(color.fuchsia, "KalmanBear", inline='po3_kal', group=grp_col)
+
+// Kalman Trend Velocity Oscillator Colors Inputs
+col_pos  = input.color(color.new(color.teal, 63),    "KalOSC+",   inline='kmosc4', group=grp_col)
+col_neu  = input.color(color.new(color.yellow, 63),  "KalOSC중립",inline='kmosc4', group=grp_col)
+col_neg  = input.color(color.new(color.fuchsia, 30), "KalOSC-",   inline='kmosc4', group=grp_col)
+col_ob   = input.color(color.new(color.green, 0),    "OB",        inline='kmosc4', group=grp_col)
+col_os   = input.color(color.new(color.red, 0),      "OS",        inline='kmosc4', group=grp_col)
+
+// ======================================================
+// Logic: Zig Zag
+// ======================================================
+f_update_drawings(_ln, _lb, _idx, _price, _start_price) =>
+    line.set_xy2(_ln, _idx, _price)
+    if not na(_lb)
+        label.set_xy(_lb, _idx, _price)
+        label.set_text(_lb, str.tostring((_price - _start_price) / _start_price * 100, "#.##") + "%")
+
+f_create_drawings(_x1, _y1, _x2, _y2, _col, _style) =>
+    _ln = line.new(_x1, _y1, _x2, _y2, color = _col, width = 1, force_overlay=true) 
+    _lb = label.new(_x2, _y2, str.tostring((_y2 - _y1) / _y1 * 100, "#.##") + "%",
+          color = color.new(_col, zig_col), textcolor = color.white, style = _style, force_overlay=true)
+    [_ln, _lb]
+
+var int dir = 0
+var float piv = na
+var int pivIdx = na
+var line ln = na
+var label lb = na
+
+float hH = ta.highest(high, dep)
+float lL = ta.lowest(low, dep)
+int hIdx = bar_index + ta.highestbars(high, dep)
+int lIdx = bar_index + ta.lowestbars(low, dep)
+
+if useZZ and inDate
+    if na(piv)
+        piv := close, pivIdx := bar_index, dir := 0
+
+    if dir == 0
+        if high > piv * (1 + dev)
+            dir := 1, piv := high, pivIdx := bar_index
+            [l, b] = f_create_drawings(pivIdx, piv, bar_index, high, color.green, label.style_label_lower_right)
+            ln := l, lb := b
+        else if low < piv * (1 - dev)
+            dir := -1, piv := low, pivIdx := bar_index
+            [l, b] = f_create_drawings(pivIdx, piv, bar_index, low, color.red, label.style_label_upper_right)
+            ln := l, lb := b
+
+    else if dir == 1
+        if hH > piv and hIdx > pivIdx
+            piv := hH
+            f_update_drawings(ln, lb, hIdx, piv, line.get_y1(ln))
+        else if low < piv * (1 - dev)
+            dir := -1
+            int startIdx = not na(ln) ? line.get_x2(ln) : pivIdx
+            [l, b] = f_create_drawings(startIdx, piv, bar_index, low, color.red, label.style_label_upper_right)
+            ln := l, lb := b
+            piv := low, pivIdx := startIdx
+
+    else if dir == -1
+        if lL < piv and lIdx > pivIdx
+            piv := lL
+            f_update_drawings(ln, lb, lIdx, piv, line.get_y1(ln))
+        else if high > piv * (1 + dev)
+            dir := 1
+            int startIdx = not na(ln) ? line.get_x2(ln) : pivIdx
+            [l, b] = f_create_drawings(startIdx, piv, bar_index, high, color.green, label.style_label_lower_right)
+            ln := l, lb := b
+            piv := high, pivIdx := startIdx
+
+
+// ======================================================
+// Logic: PO3 HTF Ghost Candle Data Fetching
+// ======================================================
+float po3_o = na, float po3_h = na, float po3_l = na, float po3_c = na, int po3_t = na
+if use_po3_tf and inDate
+    [t_o, t_h, t_l, t_c, t_t] = request.security(syminfo.tickerid, po3_tf, [open, high, low, close, time], lookahead=barmerge.lookahead_on)
+    po3_o := t_o, po3_h := t_h, po3_l := t_l, po3_c := t_c, po3_t := t_t
+
+// PO3 HTF Ghost Candle 상태 관리
+bool po3_new = ta.change(po3_t) != 0
+bool po3_visible = (po3_limit == 0) or (time > timenow - po3_limit * 60 * 1000)
+var box po3_bb = na, var box po3_wu = na, var box po3_wl = na, var line po3_lo = na, var label po3_lbH = na, var label po3_lbL = na
+
+if use_po3_tf and inDate and not na(po3_t)
+    color po3_bg = po3_c >= po3_o ? po3_c1 : po3_c2, float po3_top = math.max(po3_o, po3_c), float po3_bot = math.min(po3_o, po3_c)
+
+    // 새로운 기간 시작
+    if po3_new
+        po3_bb := na, po3_wu := na, po3_wl := na, po3_lo := na, po3_lbH := na, po3_lbL := na
+        
+        if po3_visible
+            po3_bb := box.new(bar_index, po3_o, bar_index, po3_c, border_color=color.new(color.gray, 90), bgcolor=po3_bg, force_overlay = true)
+            po3_wu := box.new(bar_index, po3_h, bar_index, po3_top, border_color=na, bgcolor=po3_bg, force_overlay = true)
+            po3_wl := box.new(bar_index, po3_bot, bar_index, po3_l, border_color=na, bgcolor=po3_bg, force_overlay = true)
+            po3_lo := po3_sO ? line.new(bar_index, po3_o, bar_index, po3_o, color=color.new(po3_bg, 0), style=line.style_solid, width=3, force_overlay = true) : na
+            
+            if po3_showL
+                po3_lbH := label.new(bar_index, po3_h, "", xloc=xloc.bar_index, yloc=yloc.price, color=color(na), style=label.style_label_down, textcolor=chart.fg_color, size=size.small, force_overlay = true)
+                po3_lbL := label.new(bar_index, po3_l, "", xloc=xloc.bar_index, yloc=yloc.price, color=color(na), style=label.style_label_up, textcolor=chart.fg_color, size=size.small, force_overlay = true)
+
+    // 업데이트
+    if not na(po3_bb)
+        box.set_top(po3_bb, po3_top), box.set_bottom(po3_bb, po3_bot), box.set_right(po3_bb, bar_index), box.set_bgcolor(po3_bb, po3_bg)
+        
+        float po3_wd = math.max(1, bar_index - box.get_left(po3_bb)) * po3_wp / 100.0
+        float po3_cn = (box.get_left(po3_bb) + bar_index) / 2.0
+        int po3_lx = math.round(po3_cn - po3_wd / 2)
+        int po3_rx = math.round(po3_cn + po3_wd / 2)
+        
+        box.set_left(po3_wu, po3_lx), box.set_right(po3_wu, po3_rx), box.set_top(po3_wu, po3_h), box.set_bottom(po3_wu, po3_top), box.set_bgcolor(po3_wu, po3_bg)
+        box.set_left(po3_wl, po3_lx), box.set_right(po3_wl, po3_rx), box.set_top(po3_wl, po3_bot), box.set_bottom(po3_wl, po3_l), box.set_bgcolor(po3_wl, po3_bg)
+        if po3_sO
+            line.set_x2(po3_lo, bar_index)
+        
+        if not na(po3_lbH)
+            label.set_xy(po3_lbH, po3_rx, po3_h) 
+            label.set_text(po3_lbH, str.tostring(po3_h, format.mintick))
+            
+        if not na(po3_lbL)
+            label.set_xy(po3_lbL, po3_rx, po3_l) 
+            label.set_text(po3_lbL, str.tostring(po3_l, format.mintick))
+
+
+// ======================================================
+// Logic: Kalman Filter
+// ======================================================
+// 1. 함수 정의 (전역 범위 유지)
+f_kalman(_src, _sharpness, _k, _len) =>
+    var float _velocity = 0.0
+    var float _kfilt = 0.0
+    var float _kfilt_trail = 0.0 
+    
+    _dist = _src - nz(_kfilt[1], _src)
+    _err  = nz(_kfilt[1], _src) + _dist * math.sqrt(_sharpness * _k / 100)
+    
+    _velocity := nz(_velocity[1], 0) + _dist * _k / 100
+    _kfilt    := _err + _velocity
+    
+    if _velocity > 0
+        _kfilt_trail := (_velocity[1] > 0) ? math.max(_kfilt, nz(_kfilt_trail[1], _kfilt)) : _kfilt
+    else
+        _kfilt_trail := (_velocity[1] <= 0) ? math.min(_kfilt, nz(_kfilt_trail[1], _kfilt)) : _kfilt
+    
+    _h_val = ta.highest(high, _len)
+    _l_val = ta.lowest(low, _len)
+    
+    [_kfilt_trail, _velocity, _h_val, _l_val, _kfilt]
+
+// request.security를 if문 밖으로 이동
+// 함수 내부에 var 변수가 있으므로, use_kalman 여부와 상관없이 백그라운드에서는 항상 계산이 돌아가야 데이터 정합성이 유지 됨
+[_k, _v, _h, _l, _r] = request.security(syminfo.tickerid, tf, f_kalman(src, Sharpness, K, len), gaps = barmerge.gaps_off)
+
+// 2. 변수 매핑 및 초기화
+// use_kalman이 꺼져있을 때 불필요한 연산을 줄이고 싶다면, 결과값을 받아오는 부분에서 제어하거나 로직 계산에서 제어 함.
+float kfilt     = _k
+float velocity  = _v
+float h_val     = _h
+float l_val     = _l
+float raw_kfilt = _r 
+
+// 3. 로직 수행 (사용자가 작성한 코드 반영), ta 함수들도 전역에서 실행되어야 하므로 여기서 미리 계산
+ta_co = ta.crossover(velocity, 0)
+ta_cu = ta.crossunder(velocity, 0)
+
+// use_kalman과 inDate 조건은 "신호 발생 조건"에 포함시킴, 이렇게 하면 계산은 끊기지 않으면서, 신호는 원할 때만 나옴.
+bool act_kalman   = use_kalman and inDate
+bool is_uptrend   = act_kalman and not na(velocity) and velocity > 0
+bool k_longCond   = act_kalman and not na(velocity) and ta_co and barstate.isconfirmed
+bool k_shortCond  = act_kalman and not na(velocity) and ta_cu and barstate.isconfirmed
+bool up_cond      = act_kalman and is_uptrend and (not na(h_val) and not na(kfilt) ? h_val > kfilt : false)
+bool dn_cond      = act_kalman and not is_uptrend and (not na(l_val) and not na(kfilt) ? l_val < kfilt : false)
+
+
+// ======================================================
+// Logic: Follow Line Global Scope
+// ======================================================
+var float fl_FollowLine = na
+var int fl_BBSignal = 0
+var int fl_iTrend = 0
+
+float fl_bbBasis  = na
+float fl_bbDev    = na
+float fl_bbUpper  = na
+float fl_bbLower  = na
+float fl_atrValue = na
+float fl_calcLine = na
+bool fl_isLong    = false 
+bool fl_isShort   = false 
+
+fl_bbBasis  := ta.sma(close, fl_BBperiod)
+fl_bbDev    := ta.stdev(close, fl_BBperiod) * fl_BBdeviation
+fl_atrValue := ta.atr(fl_ATRperiod)
+
+if useFL and inDate
+    fl_bbUpper  := fl_bbBasis + fl_bbDev
+    fl_bbLower  := fl_bbBasis - fl_bbDev
+
+    if close > fl_bbUpper
+        fl_BBSignal := 1
+    else if close < fl_bbLower
+        fl_BBSignal := -1
+
+    if fl_BBSignal == 1
+        fl_calcLine := fl_UseATRfilter ? low - fl_atrValue : low
+        fl_FollowLine := math.max(fl_calcLine, nz(fl_FollowLine[1], fl_calcLine))
+    else if fl_BBSignal == -1
+        fl_calcLine := fl_UseATRfilter ? high + fl_atrValue : high
+        fl_FollowLine := math.min(fl_calcLine, nz(fl_FollowLine[1], fl_calcLine))
+
+    if nz(fl_FollowLine) > nz(fl_FollowLine[1])
+        fl_iTrend := 1
+    else if nz(fl_FollowLine) < nz(fl_FollowLine[1])
+        fl_iTrend := -1
+    
+    fl_isLong  := fl_iTrend[1] == -1 and fl_iTrend == 1
+    fl_isShort := fl_iTrend[1] == 1 and fl_iTrend == -1
+    
+
+// ======================================================
+// Strong position Entry Condition
+// ======================================================
+str_showsignals = input.bool(false, title = 'Strong Long/Short', inline='sw', group=grp_sw)
+bool both_bullish = is_uptrend and fl_iTrend > 0 
+bool both_bearish = (not is_uptrend) and fl_iTrend < 0 
+bool strong_long  = both_bullish and not both_bullish[1]
+bool strong_short = both_bearish and not both_bearish[1]
+
+// ======================================================
+// Logic: MTF EMA Band
+// ======================================================
+float emaSlow = na, float emaFast = na
+
+calc_ema() =>
+    Fast = ta.ema(close, fast_length), Slow = ta.ema(close, slow_length), [Slow, Fast]
+
+[secSlow, secFast] = request.security(syminfo.tickerid, tf_input, calc_ema(), lookahead=barmerge.lookahead_off)
+
+index_offset = wait_close ? 1 : 0
+finalSlow = secSlow[index_offset]
+finalFast = secFast[index_offset]
+
+if show_ema_band and inDate
+    emaSlow := finalSlow, emaFast := finalFast
+
+bool isLong  = ta.crossover(emaFast, emaSlow)
+bool isShort = ta.crossunder(emaFast, emaSlow)
+
+
+
+// ======================================================
+// Logic: Kalman Trend Velocity Oscillator
+// ======================================================
+var float kso_trend_strength = na
+var kso_Y_diff     = array.new<float>()
+var kso_osc_buffer = array.new<float>()
+
+var kso_F = matrix.new<float>(2, 2, 0.0)
+kso_F.set(0, 0, 1.0), kso_F.set(0, 1, 1.0), kso_F.set(1, 0, 1.0)
+
+var kso_P = matrix.new<float>(2, 2, 0.0)
+matrix.set(kso_P, 0, 0, 1.0), matrix.set(kso_P, 1, 1, 1.0)
+
+var kso_Q = matrix.new<float>(2, 2, 0.0)
+matrix.set(kso_Q, 0, 0, kso_pn_1), matrix.set(kso_Q, 0, 1, kso_pn_1 * kso_pn_2)
+matrix.set(kso_Q, 1, 0, kso_pn_2 * kso_pn_1), matrix.set(kso_Q, 1, 1, kso_pn_2)
+
+var kso_R = matrix.new<float>(1, 1, kso_meas_noise)
+var kso_H = matrix.new<float>(1, 2, 0.0)
+matrix.set(kso_H, 0, 0, 1.0)
+
+var kso_I = matrix.new<float>(2, 2, 0.0)
+matrix.set(kso_I, 0, 0, 1.0), matrix.set(kso_I, 1, 1, 1.0)
+
+var kso_X = array.from(0.0, 0.0)
+if barstate.isfirst
+    kso_X := array.from(kso_src, kso_src)
+
+var float kso_wma_source = na 
+
+if barstate.isconfirmed
+    kso_x1 = matrix.get(kso_F, 0, 0) * array.get(kso_X, 0) + matrix.get(kso_F, 0, 1) * array.get(kso_X, 1)
+    kso_x2 = matrix.get(kso_F, 1, 1) * array.get(kso_X, 1)
+    kso_X := array.from(kso_x1, kso_x2)
+    kso_P := kso_F.mult(kso_P.mult(kso_F.transpose())).sum(kso_Q)
+    
+    array.push(kso_Y_diff, kso_src - array.get(kso_X, 0))
+
+    kso_R_adj = kso_R.copy()
+    if kso_model != kso_kf_model_enum.m_std and bar_index > 2
+        if kso_model == kso_kf_model_enum.m_vol
+            matrix.set(kso_R_adj, 0, 0, matrix.get(kso_R, 0, 0) * volume[1] / math.min(volume[1], volume))
+        else if kso_model == kso_kf_model_enum.m_park
+            kso_rng = high - low
+            kso_prv = high[1] - low[1]
+            kso_ratio = kso_rng / math.max(kso_prv, syminfo.mintick) 
+            matrix.set(kso_R_adj, 0, 0, matrix.get(kso_R, 0, 0) * (1 + kso_ratio))
+
+    kso_S = kso_H.mult(kso_P.mult(kso_H.transpose())).sum(kso_R_adj)
+    kso_K = kso_P.mult(kso_H.transpose().mult(kso_S.inv()))
+    kso_innov = kso_src - array.get(kso_H.mult(kso_X), 0)
+    
+    kso_diff = kso_K.mult(kso_innov)
+    kso_X := array.from(array.get(kso_X, 0) + matrix.get(kso_diff, 0, 0), array.get(kso_X, 1) + matrix.get(kso_diff, 1, 0))
+    kso_P := kso_I.sum(kso_K.mult(kso_H).mult(-1)).mult(kso_P)
+
+    kso_osc = array.get(kso_X, 1)
+    array.push(kso_osc_buffer, kso_osc)
+
+    if array.size(kso_Y_diff) >= kso_lookback_sigma
+        array.shift(kso_Y_diff)
+
+    if array.size(kso_osc_buffer) >= kso_lookback_trend
+        kso_A = kso_osc_buffer.abs().max()
+        kso_wma_source := (kso_osc / kso_A * 100)
+        array.shift(kso_osc_buffer)
+
+
+// ======================================================
+// Plotting: Main Chart (Force Overlay = TRUE)
+// ======================================================
+color trendColor = emaFast > emaSlow ? color.teal : emaFast < emaSlow ? color.fuchsia : color.yellow
+p1 = plot(show_ema_band ? emaFast : na, "Fast EMA Line", color=trendColor, linewidth=1, force_overlay=true) 
+p2 = plot(show_ema_band ? emaSlow : na, "Slow EMA Line", color=trendColor, linewidth=4, force_overlay=true) 
+fill(p1, p2, color=color.new(trendColor, 70), title="이평선 간격 채우기")
+
+color fl_lineColor = fl_iTrend > 0 ? color.rgb(2, 225, 255) : color.rgb(236, 18, 200)
+p_kfilt = plot(act_kalman ? kfilt : na, 
+          title="Kalman Trailing", color = is_uptrend ? colKalup : colKaldn, linewidth = 4, force_overlay=true)
+p_raw   = plot(act_kalman ? raw_kfilt : na,
+          title="Kalman Filter line", color = is_uptrend ? color.new(colKalup, 5) : color.new(colKaldn, 5), linewidth = 1, force_overlay=true)
+p_fl    = plot(fl_FollowLine, color = fl_lineColor, linewidth = 2, title = 'Follow Line', force_overlay=true)
+
+// Plotting: VWMA/SMA Breakout Detector
+color vwma_col=slowSMA < slowVWMA ? color.rgb(0, 179, 250) : color.rgb(255, 40, 237)
+p_vwmaline = plot(use_VWMA and inDate ? slowVWMA : na, title = 'VWMA Line', color = color.new(vwma_col, 30), linewidth=2, force_overlay=true)
+p_smaline = plot(use_VWMA and inDate ? slowSMA : na, title = 'SMA Line', color = color.new(vwma_col, 0), linewidth=4, force_overlay=true)
+fill(p_smaline, p_vwmaline, color=color.new(vwma_col, 70))
+
+// Plotting: Buy/Sell Label
+plotshape(fl_isLong and fl_showsignals ? fl_FollowLine - fl_atrValue : na, 
+          text = 'Buy', style = shape.labelup, location = location.absolute, 
+          color = color.blue, textcolor = color.white, size = size.auto, title = "Follow Line Buy", force_overlay=true)
+
+plotshape(fl_isShort and fl_showsignals ? fl_FollowLine + fl_atrValue : na, 
+          text = 'Sell', style = shape.labeldown, location = location.absolute, 
+          color = color.rgb(102, 15, 15), textcolor = color.white, size = size.auto, title = "Follow Line Sell", force_overlay=true)
+
+// Fill
+color kf_lineColor = is_uptrend ? color.rgb(2, 225, 255) : color.rgb(236, 18, 200)
+both_fill_col = both_bullish ? color.new(#04e0f0, 75) : both_bearish ? color.new(#f113c1, 85) : color.new(fl_lineColor, 50)
+raw_kfilt_fill_col = both_bullish ? color.new(color.green, 50) : both_bearish ? color.new(color.red, 60) : color.new(kf_lineColor, 50)
+fill_color = fill_kal_fl ? both_fill_col : raw_kfilt_fill_col
+raw_fill_col = not na(fill_color) ? raw_kfilt_fill_col : (is_uptrend ? color.new(colKalup, 45) : color.new(colKaldn, 45))
+p_close=plot(close, display=display.none, editable=false, force_overlay=true)
+fill(p_raw, p_kfilt, title="Fill Raw-Trailing", color = raw_fill_col)
+fill(p_close, p_fl, color=color.new(fill_color, 0), title="Hybrid Trend Fill")
+fill(p_raw, p_fl, color=color.new(fill_color, 70), title="Hybrid Trend Fill")
+
+// Plotting: Strong Signals
+plotshape(strong_long and str_showsignals,  title="Strong Long",  style=shape.labelup,
+   location=location.belowbar, color=color.new(color.green, 0), text="STL", textcolor=color.white, size=size.small, force_overlay=true)
+plotshape(strong_short and str_showsignals, title="Strong Short", style=shape.labeldown,
+   location=location.abovebar, color=color.new(color.red, 0), text="STS", textcolor=color.white, size=size.small, force_overlay=true)
+
+// Plotting: Kalman Signals
+plotshape(k_longCond and km_showsignals,  title="Kalman Long",  style=shape.labelup,   location=location.belowbar,
+         color=color.green, text="Long", textcolor=color.white, size=size.tiny, force_overlay=true)
+plotshape(k_shortCond and km_showsignals, title="Kalman Short", style=shape.labeldown, location=location.abovebar,
+         color=color.fuchsia,   text="Short", textcolor=color.white, size=size.tiny, force_overlay=true)
+
+// ======================================================
+// Plotting: Oscillator (Pane)
+// ======================================================
+kso_trend_strength := ta.wma(kso_wma_source, kso_smooth_str)
+
+// Color Logic
+var int kso_seg = 10
+kso_filled = math.floor(math.abs(kso_trend_strength) / (100 / kso_seg))
+kso_osc_col = col_neu
+
+if not na(kso_trend_strength)
+    for i = 0 to kso_seg - 1
+        if i < kso_filled
+            kso_osc_col := color.new(kso_trend_strength > 0 ? col_pos : col_neg, 80 - i * 10)
+        else
+            break
+
+bgcolor(strong_long and str_showsignals ? color.new(color.green, 80) : strong_short ? color.new(color.red, 80) : na, title='Strong Buy/Sell Background Bars', display=display.none, force_overlay=true)
+
+kso_p_osc = plot(ta.wma(kso_trend_strength, kso_smooth_osc), color=kso_osc_col, linewidth=3, title="Strength Oscillator")
+kso_h70   = hline(70, "70")
+kso_h0    = hline(0, "0")
+kso_hm70  = hline(-70, "-70")
+fill(kso_h70, kso_hm70, color=color.new(color.black, 99), title="Background")
+kso_p_mid = plot(0, color=na, editable=false, display=display.none)
+
+fill(kso_p_osc, kso_p_mid, 80, 30, top_color = color.new(col_ob, 0), bottom_color = color.new(col_ob, 100), title="Fill Upper")
+fill(kso_p_osc, kso_p_mid, -30, -80, top_color = color.new(col_os, 100), bottom_color = color.new(col_os, 0), title="Fill Lower")
+
+// Table
+if barstate.islast
+    kso_curr = math.round(kso_trend_strength)
+    var table kso_tbl = table.new(position.bottom_right, kso_seg + 1, 1, border_color=chart.fg_color, border_width=1, frame_color=chart.fg_color, frame_width=1, force_overlay=true)
+    for i = 0 to kso_seg - 1
+        kso_tbl_col = i < kso_filled ? color.new(kso_trend_strength > 0 ? col_pos : col_neg, 70 - i * 10) : color.new(chart.fg_color, 100)
+        table.cell(kso_tbl, i, 0, "", bgcolor=kso_tbl_col, width=1, height=2)
+    table.cell(kso_tbl, kso_seg, 0, str.tostring(kso_curr) + " %", text_color=chart.fg_color, bgcolor=na)
+
+
+// ======================================================
+// [NEW] Alerts Logic: Strength Threshold Crossover
+// ======================================================
+// 강도가 설정값(kso_alert_upper) 이상으로 올라갈 때 (Long Entry)
+bool alert_KalOSC_long = ta.crossover(kso_trend_strength, kso_alert_upper)
+// 강도가 설정값(kso_alert_lower) 이하로 내려갈 때 (Short Entry)
+bool alert_KalOSC_short = ta.crossunder(kso_trend_strength, kso_alert_lower)
+
+// ======================================================
+// Alerts
+// ======================================================
+alertcondition(use_kalman and k_longCond,  title="🚀Kalman Filter [Long]",  message="🚀Kalman Filter [Long]: Long Trend Started")
+alertcondition(use_kalman and k_shortCond, title="🚀Kalman Filter [Short]", message="🚀Kalman Filter [Short]: Short Trend Started")
+
+alertcondition(alert_KalOSC_long, title="Kalman OSC [Long]", message="Kalman OSC [Long]: Strength Oscillator Reached Long Threshold!")
+alertcondition(alert_KalOSC_short, title="Kalman OSC [Short]", message="Kalman OSC [Short]: Strength Oscillator Reached Short Threshold!")
+
+alertcondition(useFL and fl_isLong, title="Follow Line [Long]", message="Follow Line [Long]: Long Trend Started")
+alertcondition(useFL and fl_isShort, title="Follow Line [Short]", message="Follow Line [Short]: Short Trend Started")
+
+alertcondition(use_kalman and useFL and strong_long, title="STL [Long]", message="STL [Long]: Kalman and FL Both Indicators Bullish!")
+alertcondition(use_kalman and useFL and strong_short, title="STS [Short]", message="STS [Short]: Kalman and FL Both Indicators Bearish!")
+
+// 추천 이모지콘
+// 👑 (왕관 - 최고, 마스터) 💎 (다이아몬드 - 견고함, 가치) ⚜️ (플뢰르 드 리스 - 클래식한 고급스러움)
+// 🏆 (트로피 - 승리, 1위) 2. 추세 & 상승 느낌 🚀 (로켓 - 강력한 추세) 📈 (차트 상승 - 직관적)
+// 🌊 (파도 - 흐름, 웨이브) 3. 정확도 & 핵심 느낌 🎯 (조준 - 정확한 타점) ⚡ (번개 - 빠른 반응)
+// 💠 (다이아몬드 도트 - 통합된 시스템 느낌)
