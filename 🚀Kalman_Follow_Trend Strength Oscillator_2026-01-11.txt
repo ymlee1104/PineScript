@@ -511,7 +511,7 @@ fill(kso_p_osc, kso_p_mid, -30, -80, top_color = color.new(col_os, 100), bottom_
 // Table
 if barstate.islast
     kso_curr = math.round(kso_trend_strength)
-    var table kso_tbl = table.new(position.bottom_right, kso_seg + 1, 1, border_color=chart.fg_color, border_width=1, frame_color=chart.fg_color, frame_width=1, force_overlay=true)
+    var table kso_tbl = table.new(position.top_right, kso_seg + 1, 1, border_color=chart.fg_color, border_width=1, frame_color=chart.fg_color, frame_width=1) //, force_overlay=true)
     for i = 0 to kso_seg - 1
         kso_tbl_col = i < kso_filled ? color.new(kso_trend_strength > 0 ? col_pos : col_neg, 70 - i * 10) : color.new(chart.fg_color, 100)
         table.cell(kso_tbl, i, 0, "", bgcolor=kso_tbl_col, width=1, height=2)
