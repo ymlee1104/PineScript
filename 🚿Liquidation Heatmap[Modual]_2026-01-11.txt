@@ -6,7 +6,7 @@ indicator("🚿Liquidation Heatmap + Strategy [Expert]", overlay=true, max_boxes
 // =============================================================================
 grp_zigzag = "Zig Zag Line"
 useZig = input.bool(true, "ZigZag", inline='zigzag', group=grp_zigzag)
-Zigdev = input.float(1.7, "이격", step=0.1, inline='zigzag', group=grp_zigzag) / 100
+Zigdev = input.float(0.3, "이격", step=0.1, inline='zigzag', group=grp_zigzag) / 100
 Zigthk = input.int(3, "두께", inline='zigzag', group=grp_zigzag)
 ZigtxtSz = input.string(size.normal, "크기", options=[size.tiny, size.small, size.normal, size.large], inline='zigzag', group=grp_zigzag)
 
@@ -26,12 +26,12 @@ minIntensity= input.float(0.0, "Min Intensity (M)", step=0.1, inline='inten', gr
 mergeDist   = input.float(0.1, "Label Merge %", step=0.01, inline='inten', group=grp_calc)
 atrLen      = input.int(1440, "ATR Period", inline='atr', group=grp_calc)
 atrMult     = input.float(1.9, "ATR Band (%)", step=0.1, inline='atr', group=grp_calc) / 10.0
-swing1      = input.int(2, "1st Swing Width (Sensitive)", minval=1, maxval=50, group=grp_calc, tooltip="단기적인 '전술적' 진입/청산 자리를 찾습니다. 값이 작을수록 민감합니다.")
+swing1      = input.int(1, "1st Swing Width (Sensitive)", minval=1, maxval=50, group=grp_calc, tooltip="단기적인 '전술적' 진입/청산 자리를 찾습니다. 값이 작을수록 민감합니다.")
 swing2      = input.int(10, "2nd Swing Width (Robust)", minval=0, maxval=50, group=grp_calc, tooltip="장기적인 '전략적' 주요 지지/저항 라인을 찾습니다.")
 
 grp_style   = "Style & Colors"
 useManScale = input.bool(true, "Use Custom Scale", inline='st0', group=grp_style)
-valMax      = input.float(25.0, "Scale Max (M)", inline='sc1', group=grp_style) * 1000000
+valMax      = input.float(10.0, "Scale Max (M)", inline='sc1', group=grp_style) * 1000000
 valMin      = input.float(0.0, "Scale Min (M)", inline='sc1', group=grp_style) * 1000000
 contrast    = input.float(0.1, "Auto Scale Contrast", step=0.1, inline='sc2', group=grp_style)
 touchAlpha  = input.int(85, "Touched Transparency", minval=0, maxval=100, inline='sc2', group=grp_style)
@@ -40,14 +40,18 @@ colShort    = input.color(color.rgb(254, 0, 220), "Short Color", inline='col', g
 offsetPct   = input.float(0.00, "Price Offset (%)", step=0.05, inline='col', group=grp_style)
 
 // =============================================================================
-// [MODULE 6] REVERSAL ALERTS (STRATEGY INPUTS)
+// [MODULE 6] Manual Liquidation Lines (Inputs)
 // =============================================================================
-grp_alert   = "Strategy: Liquidation Reversal"
-useStrat    = input.bool(false, "Show Reversal Signals", group=grp_alert)
-liqLongP    = input.float(279.0, "Long Liq Price(Bottom)", inline='LiqP', group=grp_alert)
-liqShortP   = input.float(289.0, "Short Liq Price(Top)", inline='LiqP', group=grp_alert)
-liqLongR  = input.float(0.1, "Detection Dist (%) Long", step=0.1, inline='RangeW', group=grp_alert) / 100
-liqShortR = input.float(0.1, "/ (%) Short", step=0.1, inline='RangeW', group=grp_alert) / 100
+grp_alert    = "Alert & Liquidation Levels"
+showLiqLines = input.bool(true, "", inline='LiqP0', group=grp_alert)
+start_time  = input.time(timestamp("2026-01-11 20:11 +0900"), '시작', inline='LiqP0', group=grp_alert)
+show_length  = input.int(15, "Length", inline='LiqP0', group=grp_alert)
+
+liqLongPFrom = input.float(277.0, "Long Liq Price(From)", step=0.1, inline='LiqP1', group=grp_alert)
+liqLongPTo   = input.float(276.0, "(To)Long Liq Price", step=0.1, inline='LiqP2', group=grp_alert)
+liqShortPFrom= input.float(285.0, "Short Liq Price(From)", step=0.1, inline='LiqP1', group=grp_alert)
+liqShortPTo  = input.float(286.0, "(To)Short Liq Price", step=0.1, inline='LiqP2', group=grp_alert)
+inDate      = time >= start_time
 
 // ==============================================================================
 // [MODULE 0] ZigZag Trend_Color Calculation 
@@ -310,60 +314,75 @@ if showInd
                     lbl  = label.new(lx, grpY, grpVol.formatVolume(), xloc=xloc.bar_time, yloc=yloc.price, color=fCol, style=label.style_label_left, textcolor=color.white, size=size.normal)
                     activeLabels.push(lbl)
 
-// =============================================================================
-// [MODULE 7] STRATEGY LOGIC & ALERTS (CORRECTED)
-// =============================================================================
-
-// 1. Long Reversal Logic (Catch the Falling Knife)
-longZoneTop = liqLongP * (1 + liqLongR)
-longZoneBot = liqLongP * (1 - liqLongR)
-
-isLongTouch = low <= longZoneTop // Zone 터치
-isBullCandle= close > open      // 양봉 마감
-hasTail     = (open - low) > (close - open) * 0.3 // 꼬리가 몸통의 30% 이상
-
-condLong = useStrat and isLongTouch and isBullCandle and hasTail
-
-// // [시각화 추가] 설정한 청산 가격대 라인 그리기
-// line.new(bar_index, condLong ? liqLongP : na, bar_index + 10, liqLongP, color=color.new(color.lime, 50), style=line.style_dotted, width=4)
-// // 숏 청산 타겟 (빨간색 점선)
-// line.new(bar_index, liqShortP, bar_index + 10, liqShortP, color=color.new(color.red, 50), style=line.style_dotted, width=4)
-
-plotshape(condLong, "Long Reversal", shape.labelup, location.belowbar, color.lime, text="LONG!", textcolor=color.white)
-
-// 2. Short Reversal Logic (Top Reversal)
-shortZoneBot = liqShortP * (1 - liqShortR)
-shortZoneTop = liqShortP * (1 + liqShortR)
-
-isShortTouch = high >= shortZoneBot // Zone 터치
-isBearCandle = close < open        // 음봉 마감
-hasUpTail    = (high - open) > (open - close) * 0.3 // 윗꼬리 발생
-
-condShort = useStrat and isShortTouch and isBearCandle and hasUpTail
-
-plotshape(condShort, "Short Reversal", shape.labeldown, location.abovebar, color.red, text="SHORT!", textcolor=color.white)
-
-// 3. Alerts
-alertcondition(condLong, "Liquidation Buy Signal", "Price touched Long Liq Level & Reversing Up!")
-alertcondition(condShort, "Liquidation Sell Signal", "Price touched Short Liq Level & Reversing Down!")
-
 
 // =============================================================================
-// [시각화 추가] 청산 목표가 라인 그리기 (최적화 버전)
+// [MODULE 6] Manual Liquidation Lines (Drawing)
 // =============================================================================
-// 라인 객체를 저장할 변수 (var 키워드로 상태 유지)
-var line lineL = na
-var line lineS = na
+// 객체 초기화 (박스 2개, 라인 1개) - 한 번만 생성하고 위치만 업데이트
+var box bLong  = box.new(na, na, na, na, xloc=xloc.bar_index, border_style=line.style_solid)
+var box bShort = box.new(na, na, na, na, xloc=xloc.bar_index, border_style=line.style_solid)
+var line lMid  = line.new(na, na, na, na, xloc=xloc.bar_index, style=line.style_dotted)
 
-// 1. 마지막 봉에서만 실행 (실시간 업데이트)
-// 2. useStrat(전략 보기)가 켜져 있을 때만 실행
-if barstate.islast and useStrat
-    // 기존 라인이 있다면 삭제 (잔상 제거 애니메이션 효과)
-    line.delete(lineL)
-    line.delete(lineS)
-    
-    // 롱 청산 타겟 라인 (초록색 점선)
-    lineL := line.new(bar_index, liqLongP, bar_index + 10, liqLongP, color=color.new(color.lime, 30), style=line.style_dotted, width=4)
-    
-    // 숏 청산 타겟 라인 (빨간색 점선)
-    lineS := line.new(bar_index, liqShortP, bar_index + 10, liqShortP, color=color.new(color.red, 30), style=line.style_dotted, width=4)
+// 마지막 봉에서만 업데이트 (실시간 이동)
+if barstate.islast
+    if showLiqLines
+        // 1. Long Box (Cyan)
+        // 입력값 중 큰 값이 Top, 작은 값이 Bottom이 되도록 자동 정렬
+        float lTop = math.max(liqLongPFrom, liqLongPTo)
+        float lBot = math.min(liqLongPFrom, liqLongPTo)
+        
+        box.set_lefttop(bLong, bar_index, lTop)
+        box.set_rightbottom(bLong, bar_index + show_length, lBot)
+        box.set_border_color(bLong, color.teal)
+        box.set_bgcolor(bLong, color.new(color.teal, 85)) // 내부 투명도 85%
+
+        // 2. Short Box (Magenta)
+        float sTop = math.max(liqShortPFrom, liqShortPTo)
+        float sBot = math.min(liqShortPFrom, liqShortPTo)
+        
+        box.set_lefttop(bShort, bar_index, sTop)
+        box.set_rightbottom(bShort, bar_index + show_length, sBot)
+        box.set_border_color(bShort, color.fuchsia)
+        box.set_bgcolor(bShort, color.new(color.fuchsia, 85)) // 내부 투명도 85%
+
+        // 3. Middle Line (Yellow Dotted)
+        // liqLongPFrom과 liqShortPFrom의 중간값
+        float midP = (liqLongPFrom + liqShortPFrom) / 2.0
+        
+        line.set_xy1(lMid, bar_index, midP)
+        line.set_xy2(lMid, bar_index + show_length, midP)
+        line.set_color(lMid, color.yellow)
+        line.set_width(lMid, 7)
+
+    else
+        // 숨김 처리 (Show Lines 체크 해제 시)
+        box.set_lefttop(bLong, na, na)
+        box.set_rightbottom(bLong, na, na)
+        box.set_lefttop(bShort, na, na)
+        box.set_rightbottom(bShort, na, na)
+        line.set_xy1(lMid, na, na)
+
+// =============================================================================
+// [MODULE 7] ALERTS & SIGNALS
+// =============================================================================
+// 1. 진입 조건 정의 (시간 조건 inDate 추가)
+// 롱 진입: (하향 돌파) AND (시작일 이후)
+bool isLongEntry = ta.crossunder(close, liqLongPFrom) and inDate
+
+// 숏 진입: (상향 돌파) AND (시작일 이후)
+bool isShortEntry = ta.crossover(close, liqShortPFrom) and inDate
+
+// 2. 차트 시각화 (신호 발생 시 화살표 표시)
+// inDate 조건이 없으면 과거 차트에도 화살표가 뜰 수 있으므로, 여기서도 isLongEntry 변수를 그대로 사용
+plotshape(isLongEntry, title="Long Entry Signal", style=shape.labelup, location=location.belowbar, color=color.teal, text="Long\nLiq", textcolor=color.white, size=size.small)
+plotshape(isShortEntry, title="Short Entry Signal", style=shape.labeldown, location=location.abovebar, color=color.fuchsia, text="Short\nLiq", textcolor=color.white, size=size.small)
+
+// 3. 얼러트 조건 생성 (설정 창에서 선택 가능)
+alertcondition(isLongEntry, title="⤵Entry Long Liquidation Level", message="⤵Entry Long Liquidation Level")
+alertcondition(isShortEntry, title="⤴Entry Short Liquidation Level", message="⤴Entry Short Liquidation Level")
+
+// 4. 동적 얼러트 (Any Alert Function Call용)
+if isLongEntry
+    alert("Long Entry! Price: " + str.tostring(close), alert.freq_once_per_bar_close)
+if isShortEntry
+    alert("Short Entry! Price: " + str.tostring(close), alert.freq_once_per_bar_close)
