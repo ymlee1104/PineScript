@@ -1,0 +1,4 @@
+//@version=6
+strategy('BTC ATH Scaling', overlay=true)
+var ath = 0.0, ath := math.max(ath, high), var lbl = label.new(na, na, style=label.style_label_left, textcolor=color.white), dd = (close - ath) / ath * 100
+label.set_xy(lbl, bar_index + 3, close), label.set_text(lbl, str.format("ATH: {0}\n현재: {1}\n하락: {2}%", ath, close, dd)), label.set_color(lbl, dd < -20 ? color.orange : color.green)
