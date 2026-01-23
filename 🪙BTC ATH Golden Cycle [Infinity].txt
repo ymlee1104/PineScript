@@ -52,6 +52,17 @@ sell_qty_4  = input.float(40.0,  "4단계 매도비중 (%)", inline="s4", group=
 sell_gain_5 = input.float(600.0, "5단계 수익률 (%)", inline="s5", group=grp_sell) / 100
 sell_qty_5  = input.float(100.0,  "5단계 매도비중 (%)", inline="s5", group=grp_sell, tooltip="마지막은 전량 매도(100%)하여 사이클 리셋")
 
+// -----------------------------------------------------------------------------
+// MTF EMA Band
+// -----------------------------------------------------------------------------
+grp_ema='MTF EMA Band'
+tf_input      = input.timeframe("", "타임프레임 선택", inline='ema1', group=grp_ema) 
+wait_close    = input.bool(true, "Wait for timeframe closes", inline='ema1', group=grp_ema, tooltip="체크 시 해당 타임프레임의 캔들이 마감된 후의 데이터만 참조하여 리페인팅을 방지합니다.")
+show_ema_band = input.bool(true, "EMA Band", inline='ema2', group=grp_ema)
+fast_length   = input.int(1, title='Fast 길이',minval=1, inline='ema2', group=grp_ema)    
+slow_length   = input.int(26, title='Slow 길이',minval=1, inline='ema2', group=grp_ema) 
+
+
 // ============================================
 // 🧠 전략 로직 (Logic)
 // ============================================
@@ -140,11 +151,44 @@ if inDate
             strategy.close("Long", qty_percent=sell_qty_1, comment="TP_1")
             sold_1 := true
 
+
+// =============================================================================
+// MTF EMA Band Logic
+// =============================================================================
+float emaSlow = na
+float emaFast = na
+
+calc_ema() =>
+    Fast = ta.ema(close, fast_length)
+    Slow = ta.ema(close, slow_length)
+    [Slow, Fast]
+
+// 가이드라인 준수: lookahead=barmerge.lookahead_off
+[secSlow, secFast] = request.security(syminfo.tickerid, tf_input, calc_ema(), lookahead=barmerge.lookahead_off)
+
+index_offset = wait_close ? 1 : 0
+finalSlow = secSlow[index_offset]
+finalFast = secFast[index_offset]
+
+if show_ema_band
+    emaSlow := finalSlow
+    emaFast := finalFast
+
+
 // ============================================
 // 📊 시각화 (User Modified)
 // ============================================
-plot(avg_price > 0 ? avg_price : na, "Avg Price", color=color.yellow, linewidth=2, offset=1)
 plot(ath_price, "ATH Price", color=color.gray, style=plot.style_stepline, display=display.none)
-plot(ath_price * (1 - buy_drop_1), "Buy Zone 1", color=color.new(color.green, 80), display=display.none)
-plot(ath_price * (1 - buy_drop_3), "Buy Zone 3", color=color.new(color.green, 60), display=display.none)
-plot(ath_price * (1 - buy_drop_5), "Buy Zone 5", color=color.new(color.green, 30), display=display.none)
+plot(avg_price > 0 ? avg_price : na, "Avg Price", color=color.yellow, linewidth=2, offset=1, display=display.none)
+plot(ath_price * (1 - buy_drop_1), "Buy Zone 1", color=color.new(color.green, 50), display=display.none, linewidth=1)
+plot(ath_price * (1 - buy_drop_2), "Buy Zone 2", color=color.new(color.green, 40), display=display.none, linewidth=2)
+plot(ath_price * (1 - buy_drop_3), "Buy Zone 3", color=color.new(color.green, 30), display=display.none, linewidth=3)
+plot(ath_price * (1 - buy_drop_4), "Buy Zone 4", color=color.new(color.green, 20), display=display.none, linewidth=4)
+plot(ath_price * (1 - buy_drop_5), "Buy Zone 5", color=color.new(color.green, 10), display=display.none, linewidth=4)
+
+// [5. MTF EMA Band Plot]
+color trendColor = emaFast > emaSlow ? color.new(#03ffea, 0) : emaFast < emaSlow ? color.new(#fc02b1, 0) : color.new(color.gray, 0)
+p_cl   = plot(inDate ? close : na, "close", color=trendColor, linewidth=1, editable=false, display=display.none)
+p_ema1 = plot(inDate ? emaFast : na, "Fast EMA", color=trendColor, linewidth=1, style=plot.style_line, editable=false, display=display.none)
+p_ema2 = plot(inDate ? emaSlow : na, "Slow EMA", color=trendColor, linewidth=2, display = show_ema_band ? display.all : display.none)
+fill(p_cl, p_ema2, color=color.new(trendColor, 50), title="이평선 간격 채우기")
