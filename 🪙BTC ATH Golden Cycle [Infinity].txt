@@ -180,11 +180,11 @@ if show_ema_band
 // ============================================
 plot(ath_price, "ATH Price", color=color.gray, style=plot.style_stepline, display=display.none)
 plot(avg_price > 0 ? avg_price : na, "Avg Price", color=color.yellow, linewidth=2, offset=1, display=display.none)
-plot(ath_price * (1 - buy_drop_1), "Buy Zone 1", color=color.new(color.green, 50), display=display.none, linewidth=1)
-plot(ath_price * (1 - buy_drop_2), "Buy Zone 2", color=color.new(color.green, 40), display=display.none, linewidth=2)
-plot(ath_price * (1 - buy_drop_3), "Buy Zone 3", color=color.new(color.green, 30), display=display.none, linewidth=3)
-plot(ath_price * (1 - buy_drop_4), "Buy Zone 4", color=color.new(color.green, 20), display=display.none, linewidth=4)
-plot(ath_price * (1 - buy_drop_5), "Buy Zone 5", color=color.new(color.green, 10), display=display.none, linewidth=4)
+plot(ath_price * (1 - buy_drop_1), "Buy Zone 1", color=color.new(#03fc7f, 50), display=display.none, linewidth=1)
+plot(ath_price * (1 - buy_drop_2), "Buy Zone 2", color=color.new(#00ffea, 40), display=display.none, linewidth=2)
+plot(ath_price * (1 - buy_drop_3), "Buy Zone 3", color=color.new(#00b5fd, 30), display=display.none, linewidth=3)
+plot(ath_price * (1 - buy_drop_4), "Buy Zone 4", color=color.new(#fc00bd, 20), display=display.none, linewidth=4)
+plot(ath_price * (1 - buy_drop_5), "Buy Zone 5", color=color.new(#ff0000, 10), display=display.none, linewidth=4)
 
 // [5. MTF EMA Band Plot]
 color trendColor = emaFast > emaSlow ? color.new(#03ffea, 0) : emaFast < emaSlow ? color.new(#fc02b1, 0) : color.new(color.gray, 0)
