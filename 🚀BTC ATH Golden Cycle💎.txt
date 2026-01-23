@@ -1,0 +1,210 @@
+//@version=6
+strategy("🚀BTC ATH Golden Cycle💎", overlay=true,
+ initial_capital=10000, currency=currency.USDT, default_qty_value=100,
+ default_qty_type=strategy.percent_of_equity, commission_value=0.05, pyramiding=5, backtest_fill_limits_assumption=1,
+ slippage=1, margin_long=0, margin_short=0, calc_on_order_fills=false, calc_on_every_tick=false, use_bar_magnifier=true, process_orders_on_close=true)
+
+// ============================================
+// 🕒 TIME RANGE
+// ============================================
+grp_time = 'Time range'
+start_time      = input.time(timestamp("2019-12-16 00:00 +0900"), '시작일', inline='t2', group=grp_time)
+end_time        = input.time(timestamp("2099-12-31 00:00 +0900"), '종료일', inline='t2', group=grp_time)
+inDate          = time >= start_time and time <= end_time
+
+// ============================================
+// 📉 매수 설정 (Buy Settings)
+// ============================================
+grp_buy = '🔵 5분할 매수 (ATH 대비 하락률)'
+tip_b1 = "💡 1단계 (건강한 조정)\n[황금율] 하락률 20% / 비중 10%"
+buy_drop_1 = input.float(20.0, "1단계 하락률 (%)", inline="b1", group=grp_buy, tooltip=tip_b1) / 100
+buy_qty_1  = input.float(10.0, "1단계 투입비중 (%)", inline="b1", group=grp_buy)
+
+buy_drop_2 = input.float(35.0, "2단계 하락률 (%)", inline="b2", group=grp_buy) / 100
+buy_qty_2  = input.float(15.0, "2단계 투입비중 (%)", inline="b2", group=grp_buy)
+
+buy_drop_3 = input.float(50.0, "3단계 하락률 (%)", inline="b3", group=grp_buy) / 100
+buy_qty_3  = input.float(20.0, "3단계 투입비중 (%)", inline="b3", group=grp_buy)
+
+buy_drop_4 = input.float(65.0, "4단계 하락률 (%)", inline="b4", group=grp_buy) / 100
+buy_qty_4  = input.float(25.0, "4단계 투입비중 (%)", inline="b4", group=grp_buy)
+
+buy_drop_5 = input.float(75.0, "5단계 하락률 (%)", inline="b5", group=grp_buy) / 100
+buy_qty_5  = input.float(30.0, "5단계 투입비중 (%)", inline="b5", group=grp_buy)
+
+// ============================================
+// 📈 매도 설정 (Sell Settings)
+// ============================================
+grp_sell = '🔴 5분할 매도 (평단가 대비 상승률)'
+tip_s1 = "💰 1단계\n[황금율] 수익률 30% / 매도비중 20%"
+sell_gain_1 = input.float(100.0,  "1단계 수익률 (%)", inline="s1", group=grp_sell, tooltip=tip_s1) / 100
+sell_qty_1  = input.float(6.0,  "1단계 매도비중 (%)", inline="s1", group=grp_sell)
+
+sell_gain_2 = input.float(250.0,  "2단계 수익률 (%)", inline="s2", group=grp_sell) / 100
+sell_qty_2  = input.float(13.0,  "2단계 매도비중 (%)", inline="s2", group=grp_sell)
+
+sell_gain_3 = input.float(400.0, "3단계 수익률 (%)", inline="s3", group=grp_sell) / 100
+sell_qty_3  = input.float(17.0,  "3단계 매도비중 (%)", inline="s3", group=grp_sell)
+
+sell_gain_4 = input.float(500.0, "4단계 수익률 (%)", inline="s4", group=grp_sell) / 100
+sell_qty_4  = input.float(40.0,  "4단계 매도비중 (%)", inline="s4", group=grp_sell)
+
+sell_gain_5 = input.float(600.0, "5단계 수익률 (%)", inline="s5", group=grp_sell) / 100
+sell_qty_5  = input.float(100.0,  "5단계 매도비중 (%)", inline="s5", group=grp_sell, tooltip="마지막은 전량 매도(100%)하여 사이클 리셋")
+
+// -----------------------------------------------------------------------------
+// MTF EMA Band
+// -----------------------------------------------------------------------------
+grp_ema='MTF EMA Band'
+tf_input      = input.timeframe("", "타임프레임 선택", inline='ema1', group=grp_ema) 
+wait_close    = input.bool(true, "Wait for timeframe closes", inline='ema1', group=grp_ema, tooltip="체크 시 해당 타임프레임의 캔들이 마감된 후의 데이터만 참조하여 리페인팅을 방지합니다.")
+show_ema_band = input.bool(true, "EMA Band", inline='ema2', group=grp_ema)
+fast_length   = input.int(1, title='Fast 길이',minval=1, inline='ema2', group=grp_ema)    
+slow_length   = input.int(26, title='Slow 길이',minval=1, inline='ema2', group=grp_ema) 
+
+
+// ============================================
+// 🧠 전략 로직 (Logic)
+// ============================================
+// 1. 상태 관리 변수 (초기화)
+var bool bought_1 = false, var bool bought_2 = false, var bool bought_3 = false, var bool bought_4 = false,
+var bool bought_5 = false, var bool sold_1 = false, var bool sold_2 = false, var bool sold_3 = false, var bool sold_4 = false, var bool sold_5 = false
+
+// 2. ATH 추적 (상승장 리셋 방지)
+var float ath_price = 0.0
+
+if high > ath_price
+    ath_price := high
+
+current_drop = (ath_price - close) / ath_price
+
+// 3. 이번 사이클의 최고가 추적 (라벨링용)
+var float cycle_high_price = 0.0
+var int cycle_high_idx = 0
+
+if strategy.position_size > 0
+    if high > cycle_high_price
+        cycle_high_price := high
+        cycle_high_idx := bar_index
+
+// 4. 포지션 완전 종료(Sold Out) 감지 및 리셋 (Infinity Loop)
+is_sold_out = (strategy.position_size == 0 and strategy.position_size[1] > 0) or (strategy.position_size > 0 and strategy.position_size * close < strategy.equity * 0.005)
+
+if is_sold_out
+    // 🏆 사이클 종료 라벨
+    if cycle_high_price > 0
+        label.new(cycle_high_idx, cycle_high_price, "🚀 Cycle Peak\n" + str.tostring(cycle_high_price, format.mintick), color=color.blue, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+    // 변수 초기화
+    bought_1 := false, bought_2 := false, bought_3 := false, bought_4 := false, bought_5 := false
+    sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+    cycle_high_price := 0.0
+    
+    if strategy.position_size > 0
+        strategy.close_all(comment="Cycle Clear")
+
+avg_price = strategy.position_avg_price
+current_gain = (close - avg_price) / avg_price
+
+// [수정] 평단가 시각화 보정 로직 (매도 시 평단가 고정)
+// var float avg_price = 0.0
+
+// if strategy.position_size != 0
+//     // 포지션 수량이 늘어났을 때만(매수 시) 시스템 평단가를 가져와서 업데이트
+//     if strategy.position_size > strategy.position_size[1]
+//         avg_price := strategy.position_avg_price
+//     // 포지션 수량이 줄어들었을 때(매도 시)는 avg_price를 업데이트하지 않고 유지함
+// else
+//     // 포지션이 없으면 0으로 초기화
+//     avg_price := 0.0
+
+// current_gain = (close - avg_price) / avg_price
+
+
+
+if inDate
+    // --- 매수 로직 ---
+    if current_drop >= buy_drop_1 and not bought_1
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_1 / 100) / close, comment="Buy_1")
+        bought_1 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+
+    if current_drop >= buy_drop_2 and not bought_2
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_2 / 100) / close, comment="Buy_2")
+        bought_2 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+
+    if current_drop >= buy_drop_3 and not bought_3
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_3 / 100) / close, comment="Buy_3")
+        bought_3 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+
+    if current_drop >= buy_drop_4 and not bought_4
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_4 / 100) / close, comment="Buy_4")
+        bought_4 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+        
+    if current_drop >= buy_drop_5 and not bought_5
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_5 / 100) / close, comment="Buy_5")
+        bought_5 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+
+    // --- 매도 로직 ---
+    if strategy.position_size > 0
+        if current_gain >= sell_gain_5 and not sold_5
+            strategy.close_all(comment="TP_5_Clear", alert_message="5단계 졸업: 전량 매도")
+            sold_5 := true, sold_4 := true, sold_3 := true, sold_2 := true, sold_1 := true
+        else if current_gain >= sell_gain_4 and not sold_4
+            strategy.close("Long", qty_percent=sell_qty_4, comment="TP_4")
+            sold_4 := true
+        else if current_gain >= sell_gain_3 and not sold_3
+            strategy.close("Long", qty_percent=sell_qty_3, comment="TP_3")
+            sold_3 := true
+        else if current_gain >= sell_gain_2 and not sold_2
+            strategy.close("Long", qty_percent=sell_qty_2, comment="TP_2")
+            sold_2 := true
+        else if current_gain >= sell_gain_1 and not sold_1
+            strategy.close("Long", qty_percent=sell_qty_1, comment="TP_1")
+            sold_1 := true
+
+
+// =============================================================================
+// MTF EMA Band Logic
+// =============================================================================
+float emaSlow = na
+float emaFast = na
+
+calc_ema() =>
+    Fast = ta.ema(close, fast_length)
+    Slow = ta.ema(close, slow_length)
+    [Slow, Fast]
+
+// 가이드라인 준수: lookahead=barmerge.lookahead_off
+[secSlow, secFast] = request.security(syminfo.tickerid, tf_input, calc_ema(), lookahead=barmerge.lookahead_off)
+
+index_offset = wait_close ? 1 : 0
+finalSlow = secSlow[index_offset]
+finalFast = secFast[index_offset]
+
+if show_ema_band
+    emaSlow := finalSlow
+    emaFast := finalFast
+
+
+// ============================================
+// 📊 시각화 (User Modified)
+// ============================================
+plot(ath_price, "ATH Price", color=color.gray, style=plot.style_stepline, display=display.none)
+plot(avg_price > 0 ? avg_price : na, "Avg Price", color=color.yellow, style=plot.style_line, linewidth=1, offset=1)
+plot(ath_price * (1 - buy_drop_1), "Buy Zone 1", color=color.new(#03fc7f, 50), display=display.none, linewidth=1)
+plot(ath_price * (1 - buy_drop_2), "Buy Zone 2", color=color.new(#00ffea, 40), display=display.none, linewidth=2)
+plot(ath_price * (1 - buy_drop_3), "Buy Zone 3", color=color.new(#00b5fd, 30), display=display.none, linewidth=3)
+plot(ath_price * (1 - buy_drop_4), "Buy Zone 4", color=color.new(#fc00bd, 20), display=display.none, linewidth=4)
+plot(ath_price * (1 - buy_drop_5), "Buy Zone 5", color=color.new(#ff0000, 10), display=display.none, linewidth=4)
+
+// [5. MTF EMA Band Plot]
+color trendColor = emaFast > emaSlow ? color.new(#03ffea, 0) : emaFast < emaSlow ? color.new(#fc02b1, 0) : color.new(color.gray, 0)
+p_cl   = plot(inDate ? close : na, "close", color=trendColor, linewidth=1, editable=false, display=display.none)
+p_ema1 = plot(inDate ? emaFast : na, "Fast EMA", color=trendColor, linewidth=1, style=plot.style_line, editable=false, display=display.none)
+p_ema2 = plot(inDate ? emaSlow : na, "Slow EMA", color=trendColor, linewidth=2, display = show_ema_band ? display.all : display.none)
+fill(p_cl, p_ema2, color=color.new(trendColor, 50), title="이평선 간격 채우기")
