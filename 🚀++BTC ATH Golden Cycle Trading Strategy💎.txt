@@ -1,0 +1,409 @@
+//@version=6
+strategy("🚀BTC ATH Golden Cycle💎", overlay=true,
+ initial_capital=10000, currency=currency.USDT, default_qty_value=100,
+ default_qty_type=strategy.percent_of_equity, commission_value=0.05, pyramiding=5, backtest_fill_limits_assumption=1,
+ slippage=1, margin_long=0, margin_short=0, calc_on_order_fills=false, calc_on_every_tick=false, use_bar_magnifier=true, process_orders_on_close=true)
+
+// ============================================
+// 🕒 TIME RANGE
+// ============================================
+grp_time = 'Time range'
+start_time      = input.time(timestamp("2019-12-16 00:00 +0900"), '시작일', inline='t2', group=grp_time)
+// end_time     = input.time(timestamp("2099-12-31 00:00 +0900"), '종료일', inline='t2', group=grp_time)
+inDate          = time >= start_time //and time <= end_time
+
+// ============================================
+// ⚡ On/Off Switch
+// ============================================
+grp_sw='Indicator Switch'
+showGMI       = input.bool(true, "Geometric Mean", inline='sw', group=grp_sw)
+use_rf_filter = input.bool(false, "Range Filter", inline='sw', group=grp_sw)
+show_ema_band = input.bool(false, "EMA Band", inline='sw', group=grp_sw)
+
+// ==========================================
+// 1. Geometric Mean Inputs
+// ==========================================
+grp_gma='1. Geometric Mean'
+gmiLength1  = input.int(14, "Geometric Fast Length", minval=1, inline='gmi', group=grp_gma)
+gmiLength2  = input.int(56, "Slow Length", minval=1, inline='gmi', group=grp_gma)
+
+// -----------------------------------------------------------------------------
+// 2. MTF EMA Band
+// -----------------------------------------------------------------------------
+grp_ema='2. MTF EMA Band'
+tf_input      = input.timeframe("", "타임프레임 선택", inline='ema1', group=grp_ema) 
+wait_close    = input.bool(true, "Wait for timeframe closes", inline='ema1', group=grp_ema, tooltip="체크 시 해당 타임프레임의 캔들이 마감된 후의 데이터만 참조하여 리페인팅을 방지합니다.")
+fast_length   = input.int(1, title='Fast 길이',minval=1, inline='ema2', group=grp_ema)    
+slow_length   = input.int(250, title='Slow 길이',minval=1, inline='ema2', group=grp_ema) 
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+// 3. Range Filter Inputs
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+group_rf = '3. Range Filter Settings'
+smooth_range = input.bool(true, title='Smooth Range', inline='rf_s', group=group_rf)
+av_vals      = input.bool(false, title = 'Average Filter', inline='rf_s', group=group_rf)
+smooth_per   = input.int(27, minval = 1, title = 'Smoothing Period', inline='rf_s', group=group_rf)
+
+f_type      = input.string('Type2', options = ['Type1', 'Type2'], title = 'Type', inline='rf', group=group_rf)
+mov_src     = input.string('Close', options = ['Wicks', 'Close'], title = 'Source', inline='rf', group=group_rf)
+rng_scale   = input.string('ATR', options = ['% of Price', 'ATR', 'Average Change', 'Standard Deviation'], title = 'Scale', inline='rf', group=group_rf)
+av_samples  = input.int(2, minval = 1, title = 'Average Samples', inline='rf', group=group_rf)
+rng_per     = input.int(14, minval = 1, title = 'Period', inline='rf', group=group_rf)
+rng_qty     = input.float(2.6, minval = 0.1, step=0.1, title = 'Size', inline='rf', group=group_rf)
+
+
+// ============================================
+// 4. 📉 분할 매수 설정 (Buy Settings)
+// ============================================
+grp_buy = '4. 🔵 5분할 매수 (ATH 대비 하락률)'
+tip_b1 = "💡 1단계: 15% 하락 / 3% 매수 / 누적 3%"
+tip_b2 = "💡 2단계: 30% 하락 / 7% 매수 / 누적 10%"
+tip_b3 = "💡 3단계: 45% 하락 / 13% 매수 / 누적 23%"
+tip_b4 = "💡 4단계: 60% 하락 / 26% 매수 / 누적 49%"
+tip_b5 = "💡 5단계: 75% 하락 / 50% 매수 / 누적 99%"
+buy_drop_1 = input.float(20.0, "1단계 하락률 (%)", inline="b1", group=grp_buy) / 100
+buy_qty_1  = input.float(10.0, "1단계 투입비중 (%)", inline="b1", group=grp_buy, tooltip=tip_b1)
+
+buy_drop_2 = input.float(35.0, "2단계 하락률 (%)", inline="b2", group=grp_buy) / 100
+buy_qty_2  = input.float(15.0, "2단계 투입비중 (%)", inline="b2", group=grp_buy, tooltip=tip_b2)
+
+buy_drop_3 = input.float(50.0, "3단계 하락률 (%)", inline="b3", group=grp_buy) / 100
+buy_qty_3  = input.float(20.0, "3단계 투입비중 (%)", inline="b3", group=grp_buy, tooltip=tip_b3)
+
+buy_drop_4 = input.float(65.0, "4단계 하락률 (%)", inline="b4", group=grp_buy) / 100
+buy_qty_4  = input.float(25.0, "4단계 투입비중 (%)", inline="b4", group=grp_buy, tooltip=tip_b4)
+
+buy_drop_5 = input.float(75.0, "5단계 하락률 (%)", inline="b5", group=grp_buy) / 100
+buy_qty_5  = input.float(30.0, "5단계 투입비중 (%)", inline="b5", group=grp_buy, tooltip=tip_b5)
+
+// ============================================
+// 5. 📈 분할 매도 설정 (Sell Settings)
+// ============================================
+tip_s1 = "💡 1단계: 100% 상승 / 3% 매도 / 누적 3%"
+tip_s2 = "💡 2단계: 250% 상승 / 7% 매도 / 누적 10%"
+tip_s3 = "💡 3단계: 400% 상승 / 13% 매도 / 누적 23%"
+tip_s4 = "💡 4단계: 550% 상승 / 26% 매도 / 누적 49%"
+tip_s5 = "💡 5단계: 700% 상승 / 50% 매도 / 누적 99%"
+grp_sell = '5. 🔴 5분할 매도 (평단가 대비 상승률)'
+sell_gain_1 = input.float(100.0,  "1단계 수익률 (%)", inline="s1", group=grp_sell) / 100
+sell_qty_1  = input.float(6.0,  "1단계 매도비중 (%)", inline="s1", group=grp_sell, tooltip=tip_s1)
+
+sell_gain_2 = input.float(250.0,  "2단계 수익률 (%)", inline="s2", group=grp_sell) / 100
+sell_qty_2  = input.float(13.0,  "2단계 매도비중 (%)", inline="s2", group=grp_sell, tooltip=tip_s2)
+
+sell_gain_3 = input.float(400.0, "3단계 수익률 (%)", inline="s3", group=grp_sell) / 100
+sell_qty_3  = input.float(17.0,  "3단계 매도비중 (%)", inline="s3", group=grp_sell, tooltip=tip_s3)
+
+sell_gain_4 = input.float(500.0, "4단계 수익률 (%)", inline="s4", group=grp_sell) / 100
+sell_qty_4  = input.float(40.0,  "4단계 매도비중 (%)", inline="s4", group=grp_sell, tooltip=tip_s4)
+
+sell_gain_5 = input.float(600.0, "5단계 수익률 (%)", inline="s5", group=grp_sell) / 100
+sell_qty_5  = input.float(100.0,  "5단계 매도비중 (%)", inline="s5", group=grp_sell, tooltip=tip_s5)
+
+
+// ==========================================
+// 1. Geometric Mean Global Scope
+// ==========================================
+float gmi_ma1    = na
+float gmi_ma2    = na
+float gmi_mean   = na
+color gmi_trendCol = na
+
+// 전략 이식용 진입 신호 변수
+bool gmi_isLong  = false
+bool gmi_isShort = false
+
+// Geometric Mean Optimization
+if showGMI
+    // 이동평균 계산 (단순 이동평균 SMA 사용)
+    gmi_ma1 := ta.sma(close, gmiLength1)
+    gmi_ma2 := ta.sma(close, gmiLength2)
+    gmi_mean := math.sqrt(gmi_ma1 * gmi_ma2)
+
+    gmi_trendCol := (gmi_ma1 > gmi_mean and gmi_mean > gmi_ma2) ? color.aqua : 
+                   (gmi_ma1 < gmi_mean and gmi_mean < gmi_ma2) ? color.fuchsia : na
+    
+    gmi_isLong  := gmi_ma1 > gmi_mean and gmi_mean > gmi_ma2
+    gmi_isShort := gmi_ma1 < gmi_mean and gmi_mean < gmi_ma2
+
+
+// =============================================================================
+// 2. MTF EMA Band Logic
+// =============================================================================
+float emaSlow = na
+float emaFast = na
+
+calc_ema() =>
+    Fast = ta.ema(close, fast_length)
+    Slow = ta.ema(close, slow_length)
+    [Slow, Fast]
+
+// 가이드라인 준수: lookahead=barmerge.lookahead_off
+[secSlow, secFast] = request.security(syminfo.tickerid, tf_input, calc_ema(), lookahead=barmerge.lookahead_off)
+
+index_offset = wait_close ? 1 : 0
+finalSlow = secSlow[index_offset]
+finalFast = secFast[index_offset]
+
+if show_ema_band
+    emaSlow := finalSlow
+    emaFast := finalFast
+
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+// 3. Range Filter Functions (함수 정의)
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+// 조건부 지수 이동 평균 (Conditional Sampling EMA)
+Cond_EMA(float x, bool cond, int n) =>
+    var val = array.new_float(0)
+    var ema_val = array.new_float(1)
+    if cond
+        array.push(val, x)
+        if array.size(val) > 1
+            array.remove(val, 0)
+        if na(array.get(ema_val, 0))
+            array.fill(ema_val, array.get(val, 0))
+        array.set(ema_val, 0, (array.get(val, 0) - array.get(ema_val, 0)) * (2 / (n + 1)) + array.get(ema_val, 0))
+    EMA = array.get(ema_val, 0)
+    EMA
+
+// 조건부 단순 이동 평균 (Conditional Sampling SMA)
+Cond_SMA(float x, bool cond, int n) =>
+    var vals = array.new_float(0)
+    if cond
+        array.push(vals, x)
+        if array.size(vals) > n
+            array.remove(vals, 0)
+    SMA = array.avg(vals)
+    SMA
+
+// 표준편차 함수 (Standard Deviation)
+Stdev(float x, int n) =>
+    math.sqrt(Cond_SMA(math.pow(x, 2), true, n) - math.pow(Cond_SMA(x, true, n), 2))
+
+// 레인지 크기 계산 함수 (Range Size)
+rng_size(float x, string scale, float qty, int n) =>
+    ATR = Cond_EMA(ta.tr, true, n) 
+    AC = Cond_EMA(math.abs(x - x[1]), true, n)
+    SD = Stdev(x, n)
+    rng_size = scale == '% of Price' ? close * qty / 100 : 
+               scale == 'ATR' ? qty * ATR : 
+               scale == 'Standard Deviation' ? qty * SD : 
+               qty * AC // 기본값 'Average Change'
+    rng_size
+
+// 레인지 필터 핵심 로직 (Two Type Range Filter)
+rng_filt(float h, float l, float rng_, int n, string type, bool smooth, int sn, bool av_rf, int av_n) =>
+    rng_smooth = Cond_EMA(rng_, true, sn)
+    r = smooth ? rng_smooth : rng_
+    var rfilt = array.new_float(2, (h + l) / 2)
+    array.set(rfilt, 1, array.get(rfilt, 0))
+    
+    if type == 'Type1'
+        if h - r > array.get(rfilt, 1)
+            array.set(rfilt, 0, h - r)
+        if l + r < array.get(rfilt, 1)
+            array.set(rfilt, 0, l + r)
+            
+    if type == 'Type2'
+        if h >= array.get(rfilt, 1) + r
+            array.set(rfilt, 0, array.get(rfilt, 1) + math.floor(math.abs(h - array.get(rfilt, 1)) / r) * r)
+        if l <= array.get(rfilt, 1) - r
+            array.set(rfilt, 0, array.get(rfilt, 1) - math.floor(math.abs(l - array.get(rfilt, 1)) / r) * r)
+            
+    rng_filt1 = array.get(rfilt, 0)
+    hi_band1 = rng_filt1 + r
+    lo_band1 = rng_filt1 - r
+    
+    rng_filt2 = Cond_EMA(rng_filt1, rng_filt1 != rng_filt1[1], av_n)
+    hi_band2 = Cond_EMA(hi_band1, rng_filt1 != rng_filt1[1], av_n)
+    lo_band2 = Cond_EMA(lo_band1, rng_filt1 != rng_filt1[1], av_n)
+    
+    rng_filt = av_rf ? rng_filt2 : rng_filt1
+    hi_band = av_rf ? hi_band2 : hi_band1
+    lo_band = av_rf ? lo_band2 : lo_band1
+    [hi_band, lo_band, rng_filt]
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+// 3. Range Filter Global Variable Declaration
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+var float rf_final_filt = na
+var float rf_hi_band = na
+var float rf_lo_band = na
+var float rf_fdir = 0.0
+bool rf_upward = false
+bool rf_downward = false
+
+// ★ 전략 진입 신호 (Standard Entry Signals)
+bool rf_isLong = false
+bool rf_isShort = false
+
+// 시각화용 색상 변수
+color rf_filt_color = na
+color rf_bar_color = na
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+// 3. Range Filter Calculation Logic
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+if use_rf_filter
+    // 고가/저가 소스 결정
+    h_val = mov_src == 'Wicks' ? high : close
+    l_val = mov_src == 'Wicks' ? low : close
+
+    // 레인지 필터 계산 수행
+    [cal_h_band, cal_l_band, cal_filt] = rng_filt(h_val, l_val, rng_size((h_val + l_val) / 2, rng_scale, rng_qty, rng_per), rng_per, f_type, smooth_range, smooth_per, av_vals, av_samples)
+
+    // 전역 변수 업데이트
+    rf_final_filt := cal_filt
+    rf_hi_band    := cal_h_band
+    rf_lo_band    := cal_l_band
+
+    // 추세 방향 결정 (Direction Conditions)
+    // 필터 값이 상승하면 1, 하락하면 -1, 변동 없으면 이전 값 유지
+    rf_fdir := rf_final_filt > rf_final_filt[1] ? 1 : rf_final_filt < rf_final_filt[1] ? -1 : rf_fdir
+    
+    rf_upward   := rf_fdir == 1
+    rf_downward := rf_fdir == -1
+
+    // ★ 신호 생성 (Signal Generation)
+    // 방향이 바뀌는 순간을 포착 (상승 전환: Long, 하락 전환: Short)
+    // fdir이 변하지 않는 경우도 있으므로 변경 시점(ta.change)을 체크하거나 직접 비교
+    rf_isLong  := rf_upward and not rf_upward[1]
+    rf_isShort := rf_downward and not rf_downward[1]
+
+    // 색상 결정 (Colors)
+    rf_filt_color := rf_upward ? #05ff9b : rf_downward ? #ff0583 : #cccccc
+    
+    // 캔들 색상 로직
+    if rf_upward and close > rf_final_filt
+        rf_bar_color := close > close[1] ? #05ff9b : #00b36b
+    else if rf_downward and close < rf_final_filt 
+        rf_bar_color := close < close[1] ? #ff0583 : #b8005d
+    else
+        rf_bar_color := #cccccc
+
+
+
+// ============================================
+// 4. 🧠 분할 매수/매도 Logic
+// ============================================
+// 1. 상태 관리 변수 (초기화)
+var bool bought_1 = false, var bool bought_2 = false, var bool bought_3 = false, var bool bought_4 = false,
+var bool bought_5 = false, var bool sold_1 = false, var bool sold_2 = false, var bool sold_3 = false, var bool sold_4 = false, var bool sold_5 = false
+
+// 2. ATH 추적 (상승장 리셋 방지)
+var float ath_price = 0.0
+
+if high > ath_price
+    ath_price := high
+
+current_drop = (ath_price - close) / ath_price
+
+// 3. 이번 사이클의 최고가 추적 (라벨링용)
+var float cycle_high_price = 0.0
+var int cycle_high_idx = 0
+
+if strategy.position_size > 0
+    if high > cycle_high_price
+        cycle_high_price := high
+        cycle_high_idx := bar_index
+
+// 4. 포지션 완전 종료(Sold Out) 감지 및 리셋 (Infinity Loop)
+is_sold_out = (strategy.position_size == 0 and strategy.position_size[1] > 0) or (strategy.position_size > 0 and strategy.position_size * close < strategy.equity * 0.005)
+
+if is_sold_out
+    // 🏆 사이클 종료 라벨
+    if cycle_high_price > 0
+        label.new(cycle_high_idx, cycle_high_price, "🚀 Cycle Peak\n" + str.tostring(cycle_high_price, format.mintick), color=color.blue, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+    // 변수 초기화
+    bought_1 := false, bought_2 := false, bought_3 := false, bought_4 := false, bought_5 := false
+    sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+    cycle_high_price := 0.0
+    
+    if strategy.position_size > 0
+        strategy.close_all(comment="Cycle Clear")
+
+avg_price = strategy.position_avg_price
+current_gain = (close - avg_price) / avg_price
+
+
+// ============================================
+// 4. 🧠 분할 매수/매도 전략 실행부
+// ============================================
+
+if inDate
+    // --- 매수 로직 ---
+    if current_drop >= buy_drop_1 and not bought_1
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_1 / 100) / close, comment="Buy_1")
+        bought_1 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+
+    if current_drop >= buy_drop_2 and not bought_2
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_2 / 100) / close, comment="Buy_2")
+        bought_2 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+
+    if current_drop >= buy_drop_3 and not bought_3
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_3 / 100) / close, comment="Buy_3")
+        bought_3 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+
+    if current_drop >= buy_drop_4 and not bought_4
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_4 / 100) / close, comment="Buy_4")
+        bought_4 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+        
+    if current_drop >= buy_drop_5 and not bought_5
+        strategy.entry("Long", strategy.long, qty=strategy.equity * (buy_qty_5 / 100) / close, comment="Buy_5")
+        bought_5 := true
+        sold_1 := false, sold_2 := false, sold_3 := false, sold_4 := false, sold_5 := false
+
+    // --- 매도 로직 ---
+    if strategy.position_size > 0
+        if current_gain >= sell_gain_5 and not sold_5
+            strategy.close_all(comment="TP_5_Clear", alert_message="5단계 졸업: 전량 매도")
+            sold_5 := true, sold_4 := true, sold_3 := true, sold_2 := true, sold_1 := true
+        else if current_gain >= sell_gain_4 and not sold_4
+            strategy.close("Long", qty_percent=sell_qty_4, comment="TP_4")
+            sold_4 := true
+        else if current_gain >= sell_gain_3 and not sold_3
+            strategy.close("Long", qty_percent=sell_qty_3, comment="TP_3")
+            sold_3 := true
+        else if current_gain >= sell_gain_2 and not sold_2
+            strategy.close("Long", qty_percent=sell_qty_2, comment="TP_2")
+            sold_2 := true
+        else if current_gain >= sell_gain_1 and not sold_1
+            strategy.close("Long", qty_percent=sell_qty_1, comment="TP_1")
+            sold_1 := true
+
+
+// ============================================
+// 5. 📊 시각화 (User Modified)
+// ============================================
+// GMA Band Plot
+p_ma1 = plot(showGMI ? gmi_ma1 : na, color=color.new(gmi_trendCol, 10), title="Geometric Fast Line", linewidth=1)
+p_ma2 = plot(showGMI ? gmi_ma2 : na, color=color.new(gmi_trendCol, 10), title="Geometric Slow  Line", linewidth=4)
+plot(showGMI ? gmi_mean : na, color=color.green, title="Geometric Mean (GM)", linewidth=2)
+fill(p_ma1, p_ma2, color=color.new(gmi_trendCol, 70), title="GMI Trend Fill")
+
+// MTF EMA Band Plot
+color trendColor = emaFast > emaSlow ? color.new(#03ffea, 0) : emaFast < emaSlow ? color.new(#fc02b1, 0) : color.new(color.gray, 0)
+p_cl   = plot(inDate ? close : na, "close", color=trendColor, linewidth=1, editable=false, display=display.none)
+p_ema1 = plot(inDate ? emaFast : na, "MTF EMA Fast Line", color=trendColor, linewidth=1, style=plot.style_line, editable=false, display=display.none)
+p_ema2 = plot(inDate ? emaSlow : na, "MTF EMA Slow Line", color=trendColor, linewidth=2, display = show_ema_band ? display.all : display.none)
+fill(p_cl, p_ema2, color=color.new(trendColor, 75), title="이평선 간격 채우기")
+
+// Range Filter  Plot
+plot_ohlc4 = plot(ohlc4, display=display.none, editable=false) 
+filt_plot  = plot(use_rf_filter ? rf_final_filt : na, color = color.new(rf_filt_color, 25), linewidth=4, title='Range Filter')
+fill(plot_ohlc4, filt_plot, color = use_rf_filter ? color.new(rf_filt_color, 70) : na, title = 'Range Fill')
+
+// 분할 매수/매도 Plot
+plot(ath_price, "ATH Price", color=color.gray, style=plot.style_stepline)
+plot(avg_price > 0 ? avg_price : na, "Avg Price", color=color.yellow, style=plot.style_line, linewidth=1, offset=1)
+plot(ath_price * (1 - buy_drop_1), "Buy Zone 1", color=color.new(#03fc7f, 50), linewidth=1)
+plot(ath_price * (1 - buy_drop_2), "Buy Zone 2", color=color.new(#00ffea, 40), linewidth=2)
+plot(ath_price * (1 - buy_drop_3), "Buy Zone 3", color=color.new(#00b5fd, 30), linewidth=3)
+plot(ath_price * (1 - buy_drop_4), "Buy Zone 4", color=color.new(#fc00bd, 20), linewidth=4)
+plot(ath_price * (1 - buy_drop_5), "Buy Zone 5", color=color.new(#ff0000, 10), linewidth=4)
