@@ -52,16 +52,16 @@ av_samples  = input.int(2, minval = 1, title = 'Average Samples', inline='rf', g
 rng_per     = input.int(14, minval = 1, title = 'Period', inline='rf', group=group_rf)
 rng_qty     = input.float(2.6, minval = 0.1, step=0.1, title = 'Size', inline='rf', group=group_rf)
 
-
 // -----------------------------------------------------------------------------
 // 4. Supply and Demand Zones INPUTS
 // -----------------------------------------------------------------------------
 grp_sd       = 'Supply and Demand (지지/저항) Settings'
 sd_zone_len  = input.int(20, "Zone Extension Length", minval = 1, inline='sd', group=grp_sd)
 sd_h_mult    = input.float(0.9, "Box Height Multiplier", minval = 0.1, step = 0.1, inline='sd', group=grp_sd)
-sd_col_sup   = input.color(color.orange, "Supply Color", inline='sd', group=grp_sd)
-sd_col_dem   = input.color(#009fd4, "Demand Color", inline='sd', group=grp_sd)
-sd_transp    = input.int(65, "투명도", minval = 1, maxval = 100, inline='sd', group=grp_sd)
+sd_col_sup   = input.color(color.orange, "Supply", inline='sd', group=grp_sd)
+sd_col_dem   = input.color(#009fd4, "Demand", inline='sd', group=grp_sd)
+sd_transp    = input.int(65, "투명BG", minval = 1, maxval = 100, inline='sd', group=grp_sd)
+bd_transp    = input.int(30, "투명BD", minval = 1, maxval = 100, inline='sd', group=grp_sd)
 
 
 // ============================================
@@ -324,7 +324,7 @@ if sd_enable
         for i = 0 to 5
             if sd_is_bull[i]
                 sd_count_bear := 1
-                sd_bear_boxes.push(box.new(bar_index-i, low[i]+sd_atr, bar_index, low[i], bgcolor=color.new(sd_col_sup, sd_transp), border_color=sd_col_sup, border_width=2, text_halign=text.align_right, text_size=size.normal))
+                sd_bear_boxes.push(box.new(bar_index-i, low[i]+sd_atr, bar_index, low[i], bgcolor=color.new(sd_col_sup, sd_transp), border_color=color.new(sd_col_sup, bd_transp), border_width=2, text_halign=text.align_right, text_size=size.normal))
                 sd_bear_delta.push(_d)
                 break
             _d += sd_is_bear[i] ? -volume[i] : volume[i]
@@ -338,7 +338,7 @@ if sd_enable
         for i = 0 to 5
             if sd_is_bear[i]
                 sd_count_bull := 1
-                sd_bull_boxes.push(box.new(bar_index-i, high[i], bar_index, high[i]-sd_atr, bgcolor=color.new(sd_col_dem, sd_transp), border_color=sd_col_dem, border_width=2, text_halign=text.align_right, text_size=size.normal))
+                sd_bull_boxes.push(box.new(bar_index-i, high[i], bar_index, high[i]-sd_atr, bgcolor=color.new(sd_col_dem, sd_transp), border_color=color.new(sd_col_dem, bd_transp), border_width=2, text_halign=text.align_right, text_size=size.normal))
                 sd_bull_delta.push(_d)
                 break
             _d += sd_is_bull[i] ? volume[i] : -volume[i]
