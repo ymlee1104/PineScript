@@ -19,6 +19,7 @@ grp_sw='Indicator Switch'
 showGMI       = input.bool(true, "Geometric Mean", inline='sw', group=grp_sw)
 use_rf_filter = input.bool(false, "Range Filter", inline='sw', group=grp_sw)
 show_ema_band = input.bool(false, "EMA Band", inline='sw', group=grp_sw)
+sd_enable     = input.bool(true, "지지/저항", inline='sw', group=grp_sw)
 
 // ==========================================
 // 1. Geometric Mean Inputs
@@ -52,8 +53,19 @@ rng_per     = input.int(14, minval = 1, title = 'Period', inline='rf', group=gro
 rng_qty     = input.float(2.6, minval = 0.1, step=0.1, title = 'Size', inline='rf', group=group_rf)
 
 
+// -----------------------------------------------------------------------------
+// 4. Supply and Demand Zones INPUTS
+// -----------------------------------------------------------------------------
+grp_sd       = 'Supply and Demand (지지/저항) Settings'
+sd_zone_len  = input.int(20, "Zone Extension Length", minval = 1, inline='sd', group=grp_sd)
+sd_h_mult    = input.float(0.9, "Box Height Multiplier", minval = 0.1, step = 0.1, inline='sd', group=grp_sd)
+sd_col_sup   = input.color(color.orange, "Supply Color", inline='sd', group=grp_sd)
+sd_col_dem   = input.color(#009fd4, "Demand Color", inline='sd', group=grp_sd)
+sd_transp    = input.int(65, "투명도", minval = 1, maxval = 100, inline='sd', group=grp_sd)
+
+
 // ============================================
-// 4. 📉 분할 매수 설정 (Buy Settings)
+// 5. 📉 분할 매수 설정 (Buy Settings)
 // ============================================
 grp_buy = '4. 🔵 5분할 매수 (ATH 대비 하락률)'
 tip_b1 = "💡 1단계: 15% 하락 / 3% 매수 / 누적 3%"
@@ -282,10 +294,100 @@ if use_rf_filter
     else
         rf_bar_color := #cccccc
 
+// -----------------------------------------------------------------------------
+// 4. Supply and Demand Zones INPUTS GLOBAL STORAGE (Declared globally)
+// -----------------------------------------------------------------------------
+var sd_bear_boxes = array.new<box>()
+var sd_bull_boxes = array.new<box>()
+var sd_bear_delta = array.new<float>()
+var sd_bull_delta = array.new<float>()
+var sd_vol_hist   = array.new<float>()
+var int sd_count_bear = 0
+var int sd_count_bull = 0
+
+// --- 3. CORE LOGIC ---
+if sd_enable
+    // CALCULATIONS
+    sd_vol_hist.push(volume)
+    if sd_vol_hist.size() > 1000
+        sd_vol_hist.shift()
+
+    sd_avg_vol   = sd_vol_hist.avg()
+    sd_extra_vol = volume > sd_avg_vol
+    sd_atr       = ta.atr(200) * sd_h_mult
+    sd_is_bear   = close < open
+    sd_is_bull   = close > open
+
+    // A. Supply Zone Detection
+    if sd_is_bear and sd_is_bear[1] and sd_is_bear[2] and sd_extra_vol[1] and sd_count_bear == 0
+        float _d = 0.
+        for i = 0 to 5
+            if sd_is_bull[i]
+                sd_count_bear := 1
+                sd_bear_boxes.push(box.new(bar_index-i, low[i]+sd_atr, bar_index, low[i], bgcolor=color.new(sd_col_sup, sd_transp), border_color=sd_col_sup, border_width=2, text_halign=text.align_right, text_size=size.normal))
+                sd_bear_delta.push(_d)
+                break
+            _d += sd_is_bear[i] ? -volume[i] : volume[i]
+
+    if sd_count_bear >= 1
+        sd_count_bear := sd_count_bear >= 15 ? 0 : sd_count_bear + 1
+
+    // B. Demand Zone Detection
+    if sd_is_bull and sd_is_bull[1] and sd_is_bull[2] and sd_extra_vol[1] and sd_count_bull == 0
+        float _d = 0.
+        for i = 0 to 5
+            if sd_is_bear[i]
+                sd_count_bull := 1
+                sd_bull_boxes.push(box.new(bar_index-i, high[i], bar_index, high[i]-sd_atr, bgcolor=color.new(sd_col_dem, sd_transp), border_color=sd_col_dem, border_width=2, text_halign=text.align_right, text_size=size.normal))
+                sd_bull_delta.push(_d)
+                break
+            _d += sd_is_bull[i] ? volume[i] : -volume[i]
+
+    if sd_count_bull >= 1
+        sd_count_bull := sd_count_bull >= 15 ? 0 : sd_count_bull + 1
+
+    // C. Zone Management
+    _tot_v = math.abs(sd_bear_delta.sum()) + math.abs(sd_bull_delta.sum())
+    
+    if sd_bear_boxes.size() > 0
+        for i = sd_bear_boxes.size() - 1 to 0
+            _b = sd_bear_boxes.get(i)
+            _val = sd_bear_delta.get(i)
+            _b.set_text("Short: " + str.tostring(_val, format.volume) + " | " + str.tostring(math.abs(_val / _tot_v * 100), format.percent))
+            _b.set_right(bar_index + sd_zone_len)
+            if close > _b.get_top()
+                _b.delete(), sd_bear_boxes.remove(i), sd_bear_delta.remove(i)
+
+    if sd_bull_boxes.size() > 0
+        for i = sd_bull_boxes.size() - 1 to 0
+            _b = sd_bull_boxes.get(i)
+            _val = sd_bull_delta.get(i)
+            _b.set_text("Long: " + str.tostring(_val, format.volume) + " | " + str.tostring(math.abs(_val / _tot_v * 100), format.percent))
+            _b.set_right(bar_index + sd_zone_len)
+            if close < _b.get_bottom()
+                _b.delete(), sd_bull_boxes.remove(i), sd_bull_delta.remove(i)
+
+    // D. Limit count
+    if sd_bear_boxes.size() > 5
+        sd_bear_boxes.shift().delete(), sd_bear_delta.shift()
+    if sd_bull_boxes.size() > 5
+        sd_bull_boxes.shift().delete(), sd_bull_delta.shift()
+
+else
+    // Disable cleanup
+    if sd_bear_boxes.size() > 0
+        for i = sd_bear_boxes.size() - 1 to 0
+            sd_bear_boxes.get(i).delete()
+        sd_bear_boxes.clear(), sd_bear_delta.clear()
+    if sd_bull_boxes.size() > 0
+        for i = sd_bull_boxes.size() - 1 to 0
+            sd_bull_boxes.get(i).delete()
+        sd_bull_boxes.clear(), sd_bull_delta.clear()
+    sd_count_bear := 0, sd_count_bull := 0
 
 
 // ============================================
-// 4. 🧠 분할 매수/매도 Logic
+// 5. 🧠 분할 매수/매도 Logic
 // ============================================
 // 1. 상태 관리 변수 (초기화)
 var bool bought_1 = false, var bool bought_2 = false, var bool bought_3 = false, var bool bought_4 = false,
@@ -329,7 +431,7 @@ current_gain = (close - avg_price) / avg_price
 
 
 // ============================================
-// 4. 🧠 분할 매수/매도 전략 실행부
+// 5. 🧠 분할 매수/매도 전략 실행부
 // ============================================
 
 if inDate
@@ -379,7 +481,7 @@ if inDate
 
 
 // ============================================
-// 5. 📊 시각화 (User Modified)
+// 6. 📊 시각화 (User Modified)
 // ============================================
 // GMA Band Plot
 p_ma1 = plot(showGMI ? gmi_ma1 : na, color=color.new(gmi_trendCol, 10), title="Geometric Fast Line", linewidth=1)
