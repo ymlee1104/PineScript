@@ -1,0 +1,96 @@
+//@version=6
+indicator('Rainbow EMA & SMMA', overlay = true, max_labels_count = 500)
+
+// ==========================================
+// Rainbow EMA & SMMA Inputs
+// ==========================================
+show_Rainbow_ribbon  = input.bool(true,  "EMA Rainbow 리본 표시", group="디스플레이 설정")
+
+// ==========================================
+// Rainbow EMA & SMMA Global Scope
+// ==========================================
+// EMA 변수
+float rbw_ema10 = na, float rbw_ema15 = na, float rbw_ema20 = na, float rbw_ema25 = na
+float rbw_ema30 = na, float rbw_ema35 = na, float rbw_ema40 = na, float rbw_ema50 = na
+
+// SMMA 변수
+float rbw_smma50 = na, float rbw_smma60 = na
+
+// 상태 변수
+bool rbw_bullish = false
+bool rbw_bearish = false
+
+// ==========================================
+// Rainbow EMA & SMMA Functions
+// ==========================================
+// Smoothed Moving Average (SMMA) 계산 함수
+rbw_smma_func(src, length) =>
+    float _smma = na
+    float _sma_val = ta.sma(src, length)
+    _smma := na(_smma[1]) ? _sma_val : (_smma[1] * (length - 1) + src) / length
+    _smma
+
+// ==========================================
+// Rainbow EMA & SMMA Logic with Optimization
+// ==========================================
+// EMA Rainbow 계산 (스위치가 켜져 있을 때만 계산)
+if show_Rainbow_ribbon
+    rbw_ema10 := ta.ema(close, 10)
+    rbw_ema15 := ta.ema(close, 15)
+    rbw_ema20 := ta.ema(close, 20)
+    rbw_ema25 := ta.ema(close, 25)
+    rbw_ema30 := ta.ema(close, 30)
+    rbw_ema35 := ta.ema(close, 35)
+    rbw_ema40 := ta.ema(close, 40)
+    rbw_ema50 := ta.ema(close, 50)
+
+// SMMA 계산 (스위치가 켜져 있을 때만 계산)
+if show_Rainbow_ribbon
+    rbw_smma50 := rbw_smma_func(close, 50)
+    rbw_smma60 := rbw_smma_func(close, 60)
+
+// 트렌드 판별 로직
+rbw_bullish := rbw_ema10 > rbw_ema15 and rbw_ema15 > rbw_ema20 and rbw_ema20 > rbw_ema25 and 
+               rbw_ema25 > rbw_ema30 and rbw_ema30 > rbw_ema35 and rbw_ema35 > rbw_ema40 and 
+               rbw_ema40 > rbw_ema50 and rbw_smma50 > rbw_smma60
+
+rbw_bearish := rbw_ema10 < rbw_ema15 and rbw_ema15 < rbw_ema20 and rbw_ema20 < rbw_ema25 and 
+               rbw_ema25 < rbw_ema30 and rbw_ema30 < rbw_ema35 and rbw_ema35 < rbw_ema40 and 
+               rbw_ema40 < rbw_ema50 and rbw_smma50 < rbw_smma60
+
+// ==========================================
+// Rainbow EMA & SMMA Visualization
+// ==========================================
+// EMA Plots
+p10 = plot(show_Rainbow_ribbon ? rbw_ema10 : na, color = color.fuchsia, title = 'EMA 10', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema15 : na, color = color.purple, title = 'EMA 15', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema20 : na, color = color.navy, title = 'EMA 20', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema25 : na, color = color.blue, title = 'EMA 25', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema30 : na, color = color.green, title = 'EMA 30', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema35 : na, color = color.yellow, title = 'EMA 35', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema40 : na, color = color.orange, title = 'EMA 40', editable=false)
+p50 = plot(show_Rainbow_ribbon ? rbw_ema50 : na, color = color.red, title = 'EMA 50', editable=false)
+
+// Rainbow EMA & SMMA Fill (그라데이션)
+rbw_fill_col_10 = rbw_bullish ? color.new(color.teal, 90) : rbw_bearish ? color.new(color.fuchsia, 90) : color.new(color.yellow, 90)
+rbw_fill_col_50 = rbw_bullish ? color.new(color.teal, 10) : rbw_bearish ? color.new(color.fuchsia, 10) : color.new(color.yellow, 10)
+fill(p10, p50, rbw_ema10, rbw_ema50, show_Rainbow_ribbon ? rbw_fill_col_10 : na, show_Rainbow_ribbon ? rbw_fill_col_50 : na, "EMA Ribbon Fill")
+
+// Rainbow EMA & SMMA Plots
+rbw_trendSmmaCol = rbw_smma50 > rbw_smma60 ? color.green : color.red
+psmma50 = plot(show_Rainbow_ribbon ? rbw_smma50 : na, color=color.new(rbw_trendSmmaCol, 0), linewidth=1, title = 'SMMA 50')
+psmma60 = plot(show_Rainbow_ribbon ? rbw_smma60 : na, color=color.new(rbw_trendSmmaCol, 0), linewidth=4, title = 'SMMA 60')
+fill(psmma50, psmma60, rbw_smma50, rbw_smma60, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 90) : na, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 10) : na, "SMMA Ribbon Fill")
+
+// Rainbow EMA & SMMA Bar Color
+rbw_trendCol = rbw_bullish ? color.new(color.teal, 70) : rbw_bearish ? color.new(color.fuchsia, 70) : color.new(color.yellow, 50)
+barcolor(show_Rainbow_ribbon ? rbw_trendCol : na)
+
+// Rainbow EMA & SMMA Signals & Alerts
+bool rbw_isLong  = rbw_bullish and not rbw_bullish[1]
+bool rbw_isShort = rbw_bearish and not rbw_bearish[1]
+
+alertcondition(ta.crossover(rbw_smma50, rbw_smma60), title = 'Golden Cross Alert', message = 'SMMA 50 crossed above SMMA 60 (Bullish)')
+alertcondition(ta.crossunder(rbw_smma50, rbw_smma60), title = 'Death Cross Alert', message = 'SMMA 50 crossed below SMMA 60 (Bearish)')
+alertcondition(rbw_bullish, title = 'Bullish Zone Alert', message = 'All EMAs aligned bullish + SMMA trend up')
+alertcondition(rbw_bearish, title = 'Bearish Zone Alert', message = 'All EMAs aligned bearish + SMMA trend down')

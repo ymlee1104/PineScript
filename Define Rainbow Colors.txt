@@ -1,0 +1,8 @@
+// Define Rainbow Colors 
+color=color.red
+color=color.orange
+color=color.yellow
+color=color.green
+color=color.blue
+color=color.navy
+color=color.purple

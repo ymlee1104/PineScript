@@ -453,8 +453,8 @@ fill(p10, p50, rbw_ema10, rbw_ema50, show_Rainbow_ribbon ? rbw_fill_col_10 : na,
 // Rainbow EMA & SMMA Plots
 rbw_trendSmmaCol = rbw_ema50 > rbw_smma50 ? color.green : color.red
 // psmma50 = plot(show_Rainbow_ribbon ? rbw_smma20 : na, color=color.new(rbw_trendSmmaCol, 0), linewidth=1, title = 'SMMA 50')
-psmma60 = plot(show_Rainbow_ribbon ? rbw_smma50 : na, color=color.new(rbw_trendSmmaCol, 0), linewidth=4, title = 'SMMA 60')
-fill(p50, psmma60, rbw_ema50, rbw_smma50, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 90) : na, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 10) : na, "SMMA Ribbon Fill")
+psmma50 = plot(show_Rainbow_ribbon ? rbw_smma50 : na, color=color.new(rbw_trendSmmaCol, 0), linewidth=4, title = 'SMMA 50')
+fill(p50, psmma50, rbw_ema50, rbw_smma50, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 90) : na, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 10) : na, "SMMA Ribbon Fill")
 
 // Rainbow EMA & SMMA Bar Color
 rbw_trendCol = rbw_bullish ? color.green : rbw_bearish ? color.fuchsia : color.yellow
@@ -470,8 +470,8 @@ plotcandle(open, high, low, close,
 bool rbw_isLong  = rbw_bullish and not rbw_bullish[1]
 bool rbw_isShort = rbw_bearish and not rbw_bearish[1]
 
-alertcondition(ta.crossover(rbw_ema50, rbw_smma50), title = 'Golden Cross Alert', message = 'SMMA 50 crossed above SMMA 60 (Bullish)')
-alertcondition(ta.crossunder(rbw_ema50, rbw_smma50), title = 'Death Cross Alert', message = 'SMMA 50 crossed below SMMA 60 (Bearish)')
+alertcondition(ta.crossover(rbw_ema50, rbw_smma50), title = 'Golden Cross Alert', message = 'SMMA 50 crossed above SMMA 50 (Bullish)')
+alertcondition(ta.crossunder(rbw_ema50, rbw_smma50), title = 'Death Cross Alert', message = 'SMMA 50 crossed below SMMA 50 (Bearish)')
 alertcondition(rbw_bullish, title = 'Bullish Zone Alert', message = 'All EMAs aligned bullish + SMMA trend up')
 alertcondition(rbw_bearish, title = 'Bearish Zone Alert', message = 'All EMAs aligned bearish + SMMA trend down')
 
