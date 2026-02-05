@@ -1,0 +1,74 @@
+//@version=6
+indicator('Blackflag FTS', overlay = true)
+
+// ==========================================
+// Blackflag FTS Inputs
+// ==========================================
+grp_fts     = 'Blackflag FTS Inputs'
+trailType   = input.string('modified', 'Trailtype', options = ['modified', 'unmodified'], inline='fts', group=grp_fts)
+ATRPeriod   = input.int(28, 'ATR Period', minval=1, inline='fts', group=grp_fts)
+ATRFactor   = input.float(6.0, 'ATR Factor', step=0.1, inline='fts', group=grp_fts) // 이미지 bf200c 기준 6.0 설정
+
+// Blackflag FTS 데이터 가져오기(MTF 리페인팅 방지)
+norm_o = request.security(syminfo.tickerid, timeframe.period, open, lookahead = barmerge.lookahead_off)
+norm_h = request.security(syminfo.tickerid, timeframe.period, high, lookahead = barmerge.lookahead_off)
+norm_l = request.security(syminfo.tickerid, timeframe.period, low, lookahead = barmerge.lookahead_off)
+norm_c = request.security(syminfo.tickerid, timeframe.period, close, lookahead = barmerge.lookahead_off)
+
+// Blackflag FTS Functions / Wilders Moving Average 구현
+Wild_ma(_src, _malength) =>
+    _wild = 0.0
+    _wild := nz(_wild[1]) + (_src - nz(_wild[1])) / _malength
+    _wild
+
+// Blackflag FTS 변동성 및 트루 레인지 계산 /변동성 제한을 위한 HiLo 계산 (Calculations)
+HiLo = math.min(norm_h - norm_l, 1.5 * nz(ta.sma(norm_h - norm_l, ATRPeriod)))
+
+// 수정된 트루 레인지 계산 로직 (HRef, LRef)
+HRef = norm_l <= norm_h[1] ? norm_h - norm_c[1] : norm_h - norm_c[1] - 0.5 * (norm_l - norm_h[1])
+LRef = norm_h >= norm_l[1] ? norm_c[1] - norm_l : norm_c[1] - norm_l - 0.5 * (norm_l[1] - norm_h)
+
+// TrailType에 따른 최종 True Range 결정
+trueRange = trailType == 'modified' ? math.max(HiLo, HRef, LRef) : ta.tr(true)
+
+// 손실폭(Loss) 계산
+loss = ATRFactor * Wild_ma(trueRange, ATRPeriod)
+
+// Blackflag FTS 트렌드 및 트레일링 스탑 로직 (Trade Logic)
+float Up        = norm_c - loss
+float Dn        = norm_c + loss
+float TrendUp   = na
+float TrendDown = na
+int Trend       = 0
+float trail     = na
+float ex        = na
+
+// Blackflag FTS 트레일링 라인 계산 (이전 값 참조 및 업데이트)
+TrendUp   := nz(TrendUp[1])
+TrendDown := nz(TrendDown[1])
+Trend     := nz(Trend[1], 1)
+
+TrendUp   := norm_c[1] > TrendUp   ? math.max(Up, TrendUp) : Up
+TrendDown := norm_c[1] < TrendDown ? math.min(Dn, TrendDown) : Dn
+
+// 추세 전환 조건
+Trend := norm_c > TrendDown[1] ? 1 : (norm_c < TrendUp[1] ? -1 : Trend)
+trail := Trend == 1 ? TrendUp : TrendDown
+
+// Blackflag FTS Extremum (최고점/최저점) 계산
+ta_cu=ta.crossunder(Trend, 0), ta_co=ta.crossover(Trend, 0)
+ex := ta_co ? norm_h : (ta_cu ? norm_l : (Trend == 1 ? math.max(nz(ex[1]), norm_h) : (Trend == -1 ? math.min(nz(ex[1]), norm_l) : nz(ex[1]))))
+
+// Blackflag FTS 시각화 (Visualization)
+fill_col=Trend == 1 ? color.teal : color.fuchsia
+p_tr=plot(trail, 'Trailingstop', color=color.new(fill_col, 0), linewidth=4)
+p_ex=plot(ex, 'Extremum', style = plot.style_circles,  color=color.new(fill_col, 30), linewidth=1)
+fill(p_tr, plot(Trend == 1 ? low : high, color=color.new(fill_col, 50)), color=color.new(fill_col,85))
+
+// Blackflag FTS호 (Strategy Signals)
+isLongEntry  = ta.crossover(norm_c, TrendDown[1])
+isShortEntry = ta.crossunder(norm_c, TrendUp[1])
+
+// Blackflag FTS (Alerts)
+alertcondition(isLongEntry,  "Trend Switched Long",  "Blackflag FTS: Bullish Trend Started")
+alertcondition(isShortEntry, "Trend Switched Short", "Blackflag FTS: Bearish Trend Started")
