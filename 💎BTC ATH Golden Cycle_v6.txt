@@ -1,0 +1,540 @@
+//@version=6
+strategy("💎BTC ATH Golden Cycle_v5", overlay=true,
+ initial_capital=70000, currency=currency.USDT, default_qty_value=100,
+ default_qty_type=strategy.percent_of_equity, commission_value=0.05, pyramiding=5, backtest_fill_limits_assumption=1,
+ slippage=1, margin_long=0, margin_short=0, calc_on_order_fills=false, calc_on_every_tick=true, use_bar_magnifier=true, process_orders_on_close=true)
+
+// ============================================
+// 🕒 TIME RANGE
+// ============================================
+grp_time    = 'Time range'
+start_time  = input.time(timestamp("2019-12-16 00:00 +0900"), '시작일', group=grp_time)
+inDate      = time >= start_time
+
+// ============================================
+// ⚡ On/Off Switch
+// ============================================
+grp_sw              ='Indicator Switch'
+show_Rainbow_ribbon = input.bool(true, "Rainbow Ribbon", inline='sw', group=grp_sw)
+show_Rainbow_barCol = input.bool(true, "Rainbow Bar", inline='sw', group=grp_sw)
+show_ichi           = input.bool(false, '일목균형 Band', inline='sw', group=grp_sw)
+showGMI             = input.bool(false, "Geometric Mean", inline='sw', group=grp_sw)
+sd_enable           = input.bool(true, "Supply and Demand", inline='sw', group=grp_sw)
+show_btc_cycle      = input.bool(true, "BTC Cycle", inline='sw', group=grp_sw)
+zigZagOnOff         = input.bool(true, "ZigZag", inline='sw', group=grp_sw)
+
+// ============================================
+// ZigZag Line
+// ============================================
+import TradingView/ZigZag/7 as ZigZagLib 
+grp_zigzag  = 'ZigZag Line'
+deviationInput = input.float(0.5, "ZigZag 추세전환 이격(%)", minval=0.0, step=0.1, inline='ZigZag', group=grp_zigzag)
+depthInput     = input.int(25, "ZigZag Pivot legs", minval=0, inline='ZigZag', group=grp_zigzag)
+
+// ============================================
+// 0. Ichimoku Inputs & Optimization
+// ============================================
+ichi_grp    = 'Neo-Ichimoku Cloud'
+ichi_TKlen  = input.int(9, '전환선 기간', minval=1, inline='ic1', group=ichi_grp) 
+ichi_KJlen  = input.int(26, '기준선 기간', minval=1, inline='ic1', group=ichi_grp) 
+ichi_SBlen  = input.int(52, '선행스팬B 기간', minval=1, inline='ic2', group=ichi_grp) 
+ichi_offset = input.int(1, '실행스팬 오프셋', minval=1, inline='ic2', group=ichi_grp) 
+
+// ==========================================
+// [BTC 사이클 리듬 분석기
+// ==========================================
+grp_btc_cycle = "BTC 사이클 리듬 설정"
+string btc_cycle_tooltip = 
+     "▣ 1차 반감기: 2012, 11, 28\n" +
+     "보상: 50 -> 25 BTC, 첫 대세 상승 시작\n" +
+     "▣ 2차 반감기: 2016, 07, 09\n" +
+     "보상: 25 -> 12.5 BTC, $20,000 돌파 기반\n" +
+     "▣ 3차 반감기: 2020, 05, 11\n" +
+     "보상: 12.5 -> 6.25 BTC, 기관 유입 시작\n" +
+     "▣ 4차 반감기: 2024, 04, 20\n" +
+     "보상: 6.25 -> 3.125 BTC, ETF 승인 구간\n" +
+     "▣ 5차 반감기: 2028, 03, 26\n" +
+     "보상: 3.125 -> 1.5625 BTC, 극심한 희소성 예상"
+
+btc_cycle_halving_input = input.time(timestamp('2024-04-20T00:00:00'), "기준 반감기 날짜", group=grp_btc_cycle, tooltip=btc_cycle_tooltip)
+btc_cycle_pre_len       = input.int(530, "전 상승", inline='bc', group=grp_btc_cycle)
+btc_cycle_post_len      = input.int(534, "후 상승", inline='bc', group=grp_btc_cycle)
+btc_cycle_down_len      = input.int(365, "하락주기", inline='bc', group=grp_btc_cycle)
+
+// ============================================
+// 1. BTC ATH Golden Cycle Inputs
+// ============================================
+grp_logic = "BTC ATH Golden Cycle Inputs"
+max_drop_pct = input.float(75.0, "하락률", minval=1.0, step=1.0, inline='ath', group=grp_logic)
+max_rise_pct = input.float(491.0, "상승률", minval=10.0, step=1.0, inline='ath', group=grp_logic)
+weight_val   = input.float(2.5, "가중률", minval=0.1, step=0.1, inline='ath', group=grp_logic)
+
+// ==========================================
+// 2. Geometric Mean Inputs
+// ==========================================
+grp_gma='Geometric Mean'
+gmiLength1 = input.int(14, "Geometric Fast Length", minval=1, inline='gmi', group=grp_gma)
+gmiLength2 = input.int(56, "Slow Length", minval=1, inline='gmi', group=grp_gma)
+
+// -----------------------------------------------------------------------------
+// 3. Supply and Demand Zones INPUTS
+// -----------------------------------------------------------------------------
+grp_sd      = 'Supply and Demand (지지/저항) Settings'
+sd_zone_len = input.int(20, "Zone Extension Length", minval = 1, inline='sd', group=grp_sd)
+sd_h_mult   = input.float(0.9, "Box Height Multiplier", minval = 0.1, step = 0.1, inline='sd', group=grp_sd)
+sd_col_sup  = input.color(color.orange, "Supply", inline='sd', group=grp_sd)
+sd_col_dem  = input.color(#009fd4, "Demand", inline='sd', group=grp_sd)
+sd_transp   = input.int(75, "투명BG", minval = 1, maxval = 100, inline='sd', group=grp_sd)
+bd_transp   = input.int(55, "투명BD", minval = 1, maxval = 100, inline='sd', group=grp_sd)
+
+// ============================================
+// ZigZag Line Global Scope
+// ============================================
+var color dynamicLineColor = color.gray
+bool isLong  = false
+bool isShort = false
+
+var zigSettings = ZigZagLib.Settings.new(deviationInput, depthInput, color.gray, true, false, false, true, "Percent", zigZagOnOff)
+var zigZag = zigZagOnOff ? ZigZagLib.newInstance(zigSettings) : na
+
+// ZigZag Line Logic with Optimization
+if zigZagOnOff
+    zigZag.update()
+    pivots = zigZag.pivots
+    if array.size(pivots) > 0
+        lastPivot = array.get(pivots, array.size(pivots) - 1)
+        if not lastPivot.isHigh
+            dynamicLineColor := color.rgb(0, 217, 255)
+            isLong           := true
+            isShort          := false
+        else
+            dynamicLineColor := color.rgb(252, 2, 252)
+            isLong           := false
+            isShort          := true
+        zigSettings.lineColor := dynamicLineColor
+else
+    isLong  := false
+    isShort := false
+
+// ============================================
+// 0. Ichimoku Inputs & Optimization
+// ============================================
+float ichi_TK = na, float ichi_KJ = na, float ichi_SB = na, float ichi_SA = na, color ichi_color = na 
+if show_ichi 
+    ichi_TK := math.avg(ta.lowest(ichi_TKlen), ta.highest(ichi_TKlen)) 
+    ichi_KJ := math.avg(ta.lowest(ichi_KJlen), ta.highest(ichi_KJlen)) 
+    ichi_SB := math.avg(ta.lowest(ichi_SBlen), ta.highest(ichi_SBlen)) 
+    ichi_SA := math.avg(ichi_TK, ichi_KJ) 
+    ichi_color := ichi_SA > ichi_SB ? color.teal : color.fuchsia
+
+// ==========================================
+// 2. Geometric Mean Global Scope
+// ==========================================
+float gmi_ma1  = na
+float gmi_ma2  = na
+float gmi_mean = na
+color gmi_trendCol = na
+
+// 전략 이식용 진입 신호 변수
+bool gmi_isLong  = false
+bool gmi_isShort = false
+
+// Geometric Mean Optimization
+if showGMI
+    // 이동평균 계산 (단순 이동평균 SMA 사용)
+    gmi_ma1 := ta.sma(close, gmiLength1)
+    gmi_ma2 := ta.sma(close, gmiLength2)
+    gmi_mean := math.sqrt(gmi_ma1 * gmi_ma2)
+
+    gmi_trendCol := (gmi_ma1 > gmi_mean and gmi_mean > gmi_ma2) ? color.aqua : 
+                   (gmi_ma1 < gmi_mean and gmi_mean < gmi_ma2) ? color.fuchsia : na
+    
+    gmi_isLong  := gmi_ma1 > gmi_mean and gmi_mean > gmi_ma2
+    gmi_isShort := gmi_ma1 < gmi_mean and gmi_mean < gmi_ma2
+
+// -----------------------------------------------------------------------------
+// 3. Supply and Demand Zones INPUTS GLOBAL STORAGE (Declared globally)
+// -----------------------------------------------------------------------------
+var sd_bear_boxes = array.new<box>()
+var sd_bull_boxes = array.new<box>()
+var sd_bear_delta = array.new<float>()
+var sd_bull_delta = array.new<float>()
+var sd_vol_hist   = array.new<float>()
+var int sd_count_bear = 0
+var int sd_count_bull = 0
+
+// --- 3. CORE LOGIC ---
+if sd_enable
+    // CALCULATIONS
+    sd_vol_hist.push(volume)
+    if sd_vol_hist.size() > 1000
+        sd_vol_hist.shift()
+
+    sd_avg_vol   = sd_vol_hist.avg()
+    sd_extra_vol = volume > sd_avg_vol
+    sd_atr       = ta.atr(200) * sd_h_mult
+    sd_is_bear   = close < open
+    sd_is_bull   = close > open
+
+    // A. Supply Zone Detection
+    if sd_is_bear and sd_is_bear[1] and sd_is_bear[2] and sd_extra_vol[1] and sd_count_bear == 0
+        float _d = 0.
+        for i = 0 to 5
+            if sd_is_bull[i]
+                sd_count_bear := 1
+                sd_bear_boxes.push(box.new(bar_index-i, low[i]+sd_atr, bar_index, low[i], bgcolor=color.new(sd_col_sup, sd_transp), border_color=color.new(sd_col_sup, bd_transp), border_width=2, text_halign=text.align_right, text_size=size.normal))
+                sd_bear_delta.push(_d)
+                break
+            _d += sd_is_bear[i] ? -volume[i] : volume[i]
+
+    if sd_count_bear >= 1
+        sd_count_bear := sd_count_bear >= 15 ? 0 : sd_count_bear + 1
+
+    // B. Demand Zone Detection
+    if sd_is_bull and sd_is_bull[1] and sd_is_bull[2] and sd_extra_vol[1] and sd_count_bull == 0
+        float _d = 0.
+        for i = 0 to 5
+            if sd_is_bear[i]
+                sd_count_bull := 1
+                sd_bull_boxes.push(box.new(bar_index-i, high[i], bar_index, high[i]-sd_atr, bgcolor=color.new(sd_col_dem, sd_transp), border_color=color.new(sd_col_dem, bd_transp), border_width=2, text_halign=text.align_right, text_size=size.normal))
+                sd_bull_delta.push(_d)
+                break
+            _d += sd_is_bull[i] ? volume[i] : -volume[i]
+
+    if sd_count_bull >= 1
+        sd_count_bull := sd_count_bull >= 15 ? 0 : sd_count_bull + 1
+
+    // C. Zone Management
+    _tot_v = math.abs(sd_bear_delta.sum()) + math.abs(sd_bull_delta.sum())
+    
+    if sd_bear_boxes.size() > 0
+        for i = sd_bear_boxes.size() - 1 to 0
+            _b = sd_bear_boxes.get(i)
+            _val = sd_bear_delta.get(i)
+            _b.set_text("Short: " + str.tostring(_val, format.volume) + " | " + str.tostring(math.abs(_val / _tot_v * 100), format.percent))
+            _b.set_right(bar_index + sd_zone_len)
+            if close > _b.get_top()
+                _b.delete(), sd_bear_boxes.remove(i), sd_bear_delta.remove(i)
+
+    if sd_bull_boxes.size() > 0
+        for i = sd_bull_boxes.size() - 1 to 0
+            _b = sd_bull_boxes.get(i)
+            _val = sd_bull_delta.get(i)
+            _b.set_text("Long: " + str.tostring(_val, format.volume) + " | " + str.tostring(math.abs(_val / _tot_v * 100), format.percent))
+            _b.set_right(bar_index + sd_zone_len)
+            if close < _b.get_bottom()
+                _b.delete(), sd_bull_boxes.remove(i), sd_bull_delta.remove(i)
+
+    // D. Limit count
+    if sd_bear_boxes.size() > 5
+        sd_bear_boxes.shift().delete(), sd_bear_delta.shift()
+    if sd_bull_boxes.size() > 5
+        sd_bull_boxes.shift().delete(), sd_bull_delta.shift()
+
+else
+    // Disable cleanup
+    if sd_bear_boxes.size() > 0
+        for i = sd_bear_boxes.size() - 1 to 0
+            sd_bear_boxes.get(i).delete()
+        sd_bear_boxes.clear(), sd_bear_delta.clear()
+    if sd_bull_boxes.size() > 0
+        for i = sd_bull_boxes.size() - 1 to 0
+            sd_bull_boxes.get(i).delete()
+        sd_bull_boxes.clear(), sd_bull_delta.clear()
+    sd_count_bear := 0, sd_count_bull := 0
+
+
+// ============================================
+// 📊 BTC ATH Golden Cycle 비중 및 타겟 계산
+// ============================================
+f_calc_weight(w) =>
+    w0 = 1.0
+    w1 = w0 * w
+    w2 = w1 * w
+    w3 = w2 * w
+    w4 = w3 * w
+    total = w0 + w1 + w2 + w3 + w4
+    [w0/total, w1/total, w2/total, w3/total, w4/total]
+
+[wt1, wt2, wt3, wt4, wt5] = f_calc_weight(weight_val)
+
+
+// 누적 비중 및 단계별 하락률 계산
+float cum_wt1 = wt1
+float cum_wt2 = wt1 + wt2
+float cum_wt3 = cum_wt2 + wt3
+float cum_wt4 = cum_wt3 + wt4
+float cum_wt5 = cum_wt4 + wt5
+
+step_drop = max_drop_pct / 5
+float d1 = step_drop * 1, float d2 = step_drop * 2, float d3 = step_drop * 3, float d4 = step_drop * 4, float d5 = step_drop * 5
+
+
+// ATH 추적
+var float ath = 0.0
+ath := math.max(nz(ath, high), high)
+
+// 매수 타겟가 계산
+buy_p1 = ath * (1 - d1 / 100)
+buy_p2 = ath * (1 - d2 / 100)
+buy_p3 = ath * (1 - d3 / 100)
+buy_p4 = ath * (1 - d4 / 100)
+buy_p5 = ath * (1 - d5 / 100)
+
+// 매도 타겟가 계산 (평단 기준)
+avg_p = strategy.position_avg_price
+step_rise = max_rise_pct / 5
+sell_p1 = avg_p * (1 + step_rise * 1 / 100)
+sell_p2 = avg_p * (1 + step_rise * 2 / 100)
+sell_p3 = avg_p * (1 + step_rise * 3 / 100)
+sell_p4 = avg_p * (1 + step_rise * 4 / 100)
+sell_p5 = avg_p * (1 + step_rise * 5 / 100)
+
+
+// ============================================
+// 💰 전략 진입 및 청산 (Update: 코멘트 로직 수정)
+// ============================================
+f_has_id(id) =>
+    has = false
+    if strategy.opentrades > 0
+        for i = 0 to strategy.opentrades - 1
+            if strategy.opentrades.entry_id(i) == id
+                has := true
+                break
+    has
+
+has_l1 = f_has_id("L1"), has_l2 = f_has_id("L2"), has_l3 = f_has_id("L3"), has_l4 = f_has_id("L4"), has_l5 = f_has_id("L5")
+
+if inDate
+    // 매수 코멘트: 현재비중 / 누적비중 / ATH대비하락률
+    if not has_l1 and low <= buy_p1
+        string msg = "L1(" + str.tostring(wt1*100, "#.##") + "% / " + str.tostring(cum_wt1*100, "#.##") + "% / -" + str.tostring(d1, "#.#") + "%)"
+        strategy.entry("L1", strategy.long, qty = (strategy.equity * wt1) / buy_p1, comment=msg)
+    
+    if not has_l2 and low <= buy_p2
+        string msg = "L2(" + str.tostring(wt2*100, "#.##") + "% / " + str.tostring(cum_wt2*100, "#.##") + "% / -" + str.tostring(d2, "#.#") + "%)"
+        strategy.entry("L2", strategy.long, qty = (strategy.equity * wt2) / buy_p2, comment=msg)
+
+    if not has_l3 and low <= buy_p3
+        string msg = "L3(" + str.tostring(wt3*100, "#.##") + "% / " + str.tostring(cum_wt3*100, "#.##") + "% / -" + str.tostring(d3, "#.#") + "%)"
+        strategy.entry("L3", strategy.long, qty = (strategy.equity * wt3) / buy_p3, comment=msg)
+
+    if not has_l4 and low <= buy_p4
+        string msg = "L4(" + str.tostring(wt4*100, "#.##") + "% / " + str.tostring(cum_wt4*100, "#.##") + "% / -" + str.tostring(d4, "#.#") + "%)"
+        strategy.entry("L4", strategy.long, qty = (strategy.equity * wt4) / buy_p4, comment=msg)
+
+    if not has_l5 and low <= buy_p5
+        string msg = "L5(" + str.tostring(wt5*100, "#.##") + "% / " + str.tostring(cum_wt5*100, "#.##") + "% / -" + str.tostring(d5, "#.#") + "%)"
+        strategy.entry("L5", strategy.long, qty = (strategy.equity * wt5) / buy_p5, comment=msg)
+
+    // 매도 코멘트: 목표 수익률(평단대비) / 단계
+    if strategy.position_size > 0
+        strategy.exit("Ex1", "L1", limit = sell_p1, comment="Ex1(Profit: " + str.tostring(step_rise*1, "#") + "% / Step:1)")
+        strategy.exit("Ex2", "L2", limit = sell_p2, comment="Ex2(Profit: " + str.tostring(step_rise*2, "#") + "% / Step:2)")
+        strategy.exit("Ex3", "L3", limit = sell_p3, comment="Ex3(Profit: " + str.tostring(step_rise*3, "#") + "% / Step:3)")
+        strategy.exit("Ex4", "L4", limit = sell_p4, comment="Ex4(Profit: " + str.tostring(step_rise*4, "#") + "% / Step:4)")
+        strategy.exit("Ex5", "L5", limit = sell_p5, comment="Ex5(Profit: " + str.tostring(step_rise*5, "#") + "% / Step:5)")
+
+
+//     if not has_l1 and low <= buy_p1
+//         strategy.entry("L1", strategy.long, qty = (strategy.equity * wt1) / buy_p1, comment="L1(" + str.tostring(wt1 * 100, "#.##") + "%)")
+//     if not has_l2 and low <= buy_p2
+//         strategy.entry("L2", strategy.long, qty = (strategy.equity * wt2) / buy_p2, comment="L2(" + str.tostring(wt2 * 100, "#.##") + "%)")
+//     if not has_l3 and low <= buy_p3
+//         strategy.entry("L3", strategy.long, qty = (strategy.equity * wt3) / buy_p3, comment="L3(" + str.tostring(wt3 * 100, "#.##") + "%)")
+//     if not has_l4 and low <= buy_p4
+//         strategy.entry("L4", strategy.long, qty = (strategy.equity * wt4) / buy_p4, comment="L4(" + str.tostring(wt4 * 100, "#.##") + "%)")
+//     if not has_l5 and low <= buy_p5
+//         strategy.entry("L5", strategy.long, qty = (strategy.equity * wt5) / buy_p5, comment="L5(" + str.tostring(wt5 * 100, "#.##") + "%)")
+
+//     // 매도: 평단가 대비 목표 상승률 표시
+//     if strategy.position_size > 0
+//         strategy.exit("Ex1", "L1", limit = sell_p1, comment="Ex1(" + str.tostring(step_rise * 1, "#") + "%)")
+//         strategy.exit("Ex2", "L2", limit = sell_p2, comment="Ex2(" + str.tostring(step_rise * 2, "#") + "%)")
+//         strategy.exit("Ex3", "L3", limit = sell_p3, comment="Ex3(" + str.tostring(step_rise * 3, "#") + "%)")
+//         strategy.exit("Ex4", "L4", limit = sell_p4, comment="Ex4(" + str.tostring(step_rise * 4, "#") + "%)")
+//         strategy.exit("Ex5", "L5", limit = sell_p5, comment="Ex5(" + str.tostring(step_rise * 5, "#") + "%)")
+
+// ==========================================
+// [BTC 사이클 리듬 분석기
+// ==========================================
+var int btc_cycle_ms_day = 24 * 60 * 60 * 1000
+var int btc_cycle_pre_start = 0
+var int btc_cycle_post_end = 0
+var int btc_cycle_down_end = 0
+var int trsp_bg = 75
+var float label_height = 0.04
+
+//--- 3. 핵심 로직 및 시각화 (스위치 ON일 때만 계산) ---
+if show_btc_cycle
+    // 날짜 계산 [cite: 3]
+    btc_cycle_pre_start := btc_cycle_halving_input - (btc_cycle_pre_len * btc_cycle_ms_day)
+    btc_cycle_post_end  := btc_cycle_halving_input + (btc_cycle_post_len * btc_cycle_ms_day)
+    btc_cycle_down_end  := btc_cycle_post_end + (btc_cycle_down_len * btc_cycle_ms_day)
+
+    // 시각화 (마지막 바에서 처리) [cite: 4, 5, 6]
+    if barstate.islast
+
+        // 카운트다운 테이블 [cite: 7, 8]
+        var table btc_table = table.new(position.bottom_right, 1, 1, bgcolor=color.new(color.black, 85))
+        string btc_status = ""
+        
+        if time < btc_cycle_post_end
+            btc_status := "상승 사이클 진행 중"
+        else if time >= btc_cycle_post_end and time < btc_cycle_down_end
+            // 예상 저점까지 남은 일수 계산
+            int btc_rem_days = math.ceil((btc_cycle_down_end - time) / btc_cycle_ms_day)
+            btc_status := "예상 저점까지 남은 일수 : " + str.tostring(btc_rem_days) + "일,"
+        else
+            btc_status := "하락 조정 사이클 종료"
+            
+        table.cell(btc_table, 0, 0, btc_status, text_color=color.white)
+
+
+        // 박스: 반감기 전 상승기
+        box.new(left=btc_cycle_pre_start, top=high * label_height, right=btc_cycle_halving_input, bottom=0, 
+                 xloc=xloc.bar_time, bgcolor=color.new(#03f7ff, trsp_bg), border_color=color.new(color.rgb(0, 193, 252), 100), 
+                 text="반감기 전 상승기", text_color=color.white,
+                 text_size=size.normal, text_valign=text.align_bottom)
+        
+        // 박스: 반감기 후 상승기 (오늘까지만 표시)
+        if time >= btc_cycle_halving_input
+            box.new(left=btc_cycle_halving_input, top=high * label_height, right=math.min(btc_cycle_post_end, time), 
+                     bottom=0, xloc=xloc.bar_time, bgcolor=color.new(#2bff01, trsp_bg), 
+                     border_color=color.new(color.green, 100), text="반감기 후 상승기", text_color=color.white,
+                     text_size=size.normal, text_valign=text.align_bottom)
+
+        
+        // 박스: 고점 후 하락조정기 (오늘까지만 표시)
+        if time >= btc_cycle_post_end
+            box.new(left=btc_cycle_post_end, top=high * label_height, right=math.min(btc_cycle_down_end, time), 
+                    bottom=0, xloc=xloc.bar_time, bgcolor=color.new(#e100ff, trsp_bg), 
+                    border_color=color.new(color.orange, 100), text=btc_status + " 고점 후 하락조정기", text_color=color.white,
+                    text_size=size.normal, text_valign=text.align_bottom, text_halign=text.align_left)
+
+
+// ==========================================
+// Rainbow EMA & SMMA Global Scope
+// ==========================================
+// EMA 변수
+float rbw_ema10 = na, float rbw_ema15 = na, float rbw_ema20 = na, float rbw_ema25 = na
+float rbw_ema30 = na, float rbw_ema35 = na, float rbw_ema40 = na, float rbw_ema50 = na
+
+// SMMA 변수
+float rbw_smma50 = na
+
+// 상태 변수
+bool rbw_bullish = false
+bool rbw_bearish = false
+
+// ==========================================
+// Rainbow EMA & SMMA Functions
+// ==========================================
+// Smoothed Moving Average (SMMA) 계산 함수
+rbw_smma_func(src, length) =>
+    float _smma = na
+    float _sma_val = ta.sma(src, length)
+    _smma := na(_smma[1]) ? _sma_val : (_smma[1] * (length - 1) + src) / length
+    _smma
+
+// ==========================================
+// Rainbow EMA & SMMA Logic with Optimization
+// ==========================================
+if show_Rainbow_ribbon
+    rbw_ema10 := ta.ema(close, 10)
+    rbw_ema15 := ta.ema(close, 15)
+    rbw_ema20 := ta.ema(close, 20)
+    rbw_ema25 := ta.ema(close, 25)
+    rbw_ema30 := ta.ema(close, 30)
+    rbw_ema35 := ta.ema(close, 35)
+    rbw_ema40 := ta.ema(close, 40)
+    rbw_ema50 := ta.ema(close, 50)
+
+// SMMA 계산 (스위치가 켜져 있을 때만 계산)
+if show_Rainbow_ribbon
+    rbw_smma50 := rbw_smma_func(close, 50)
+
+// 트렌드 판별 로직
+rbw_bullish := rbw_ema10 > rbw_ema15 and rbw_ema15 > rbw_ema20 and rbw_ema20 > rbw_ema25 and 
+               rbw_ema25 > rbw_ema30 and rbw_ema30 > rbw_ema35 and rbw_ema35 > rbw_ema40 and 
+               rbw_ema40 > rbw_ema50 and rbw_ema50 > rbw_smma50
+
+rbw_bearish := rbw_ema10 < rbw_ema15 and rbw_ema15 < rbw_ema20 and rbw_ema20 < rbw_ema25 and 
+               rbw_ema25 < rbw_ema30 and rbw_ema30 < rbw_ema35 and rbw_ema35 < rbw_ema40 and 
+               rbw_ema40 < rbw_ema50 and rbw_ema50 < rbw_smma50
+
+// ============================================
+// 🎨 VISUALIZATION (시각화 최적화)
+// ============================================
+// 0. Ichimoku Inputs & Optimization
+plot(show_ichi ? ichi_KJ : na, title='Neo-Ichi 기준선', color=color.new(color.yellow, 0), linestyle=plot.linestyle_dotted, linewidth=2) 
+ichi_pA = plot(show_ichi ? ichi_SA : na, title='Neo-Ichi 선행스팬A', color=color.new(ichi_color, 0), offset=ichi_offset, linewidth=1) 
+ichi_pB = plot(show_ichi ? ichi_SB : na, title='Neo-Ichi 선행스팬B', color=color.new(ichi_color, 0), offset=ichi_offset, linewidth=4) 
+fill(ichi_pA, ichi_pB, color=color.new(ichi_color, 70), title='Neo-Ichi 구름대')
+
+// GMA Band Plot
+p_ma1 = plot(showGMI ? gmi_ma1 : na, color=color.new(gmi_trendCol, 10), title="Geometric Fast Line", linewidth=1)
+p_ma2 = plot(showGMI ? gmi_ma2 : na, color=color.new(gmi_trendCol, 10), title="Geometric Slow  Line", linewidth=4)
+plot(showGMI ? gmi_mean : na, color=color.green, title="Geometric Mean (GM)", linewidth=2)
+fill(p_ma1, p_ma2, color=color.new(gmi_trendCol, 70), title="GMI Trend Fill")
+
+
+// BTC ATH Golden Cycle / 마지막 거래(특히 매도) 발생 시점 추적
+var int last_sell_bar = 0
+if strategy.position_size[1] > strategy.position_size
+    last_sell_bar := bar_index
+
+// 현재 보유 물량 중 가장 먼저 도달할 타겟 선정
+float current_sell_target = na
+if has_l1
+    current_sell_target := sell_p1
+else if has_l2
+    current_sell_target := sell_p2
+else if has_l3
+    current_sell_target := sell_p3
+else if has_l4
+    current_sell_target := sell_p4
+else if has_l5
+    current_sell_target := sell_p5
+
+// 시각화 조건: 포지션이 있고, 마지막 매도 시점 이후부터만 표시
+show_sell_line = strategy.position_size > 0 and bar_index >= last_sell_bar
+next_buy = not has_l1 ? buy_p1 : not has_l2 ? buy_p2 : not has_l3 ? buy_p3 : not has_l4 ? buy_p4 : not has_l5 ? buy_p5 : na
+bool isBuyTriggered = not na(next_buy) and (low <= next_buy)
+bool isSellTriggered = not na(current_sell_target) and (high >= current_sell_target)
+
+plot(ath, "ATH", color.new(color.gray, 30), style=plot.style_stepline, linewidth=1)
+plot(show_btc_cycle ? next_buy : na, "Next Buy", color.new(#00ffea, 0), style=plot.style_steplinebr, linewidth=2, offset=1)
+plot(show_btc_cycle and show_sell_line ? current_sell_target : na, "Next Sell", color.new(color.orange, 0), linestyle=plot.linestyle_dotted, linewidth=1)
+
+// ==========================================
+// Rainbow EMA & SMMA Visualization
+// ==========================================
+p10 = plot(show_Rainbow_ribbon ? rbw_ema10 : na, color = color.fuchsia, title = 'EMA 10', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema15 : na, color = color.purple, title = 'EMA 15', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema20 : na, color = color.navy, title = 'EMA 20', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema25 : na, color = color.blue, title = 'EMA 25', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema30 : na, color = color.green, title = 'EMA 30', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema35 : na, color = color.yellow, title = 'EMA 35', editable=false)
+plot(show_Rainbow_ribbon ? rbw_ema40 : na, color = color.orange, title = 'EMA 40', editable=false)
+p50 = plot(show_Rainbow_ribbon ? rbw_ema50 : na, color = color.red, title = 'EMA 50', editable=false)
+
+// Rainbow EMA & SMMA Fill (그라데이션)
+rbw_fill_col_10 = rbw_bullish ? color.new(color.teal, 90) : rbw_bearish ? color.new(color.fuchsia, 90) : color.new(color.yellow, 90)
+rbw_fill_col_50 = rbw_bullish ? color.new(color.teal, 10) : rbw_bearish ? color.new(color.fuchsia, 10) : color.new(color.yellow, 10)
+fill(p10, p50, rbw_ema10, rbw_ema50, show_Rainbow_ribbon ? rbw_fill_col_10 : na, show_Rainbow_ribbon ? rbw_fill_col_50 : na, "EMA Ribbon Fill")
+
+// Rainbow EMA & SMMA Plots
+rbw_trendSmmaCol = rbw_ema50 > rbw_smma50 ? color.green : color.red
+psmma50 = plot(show_Rainbow_ribbon ? rbw_smma50 : na, color=color.new(rbw_trendSmmaCol, 0), linewidth=4, title = 'SMMA 50')
+fill(p50, psmma50, rbw_ema50, rbw_smma50, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 90) : na, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 10) : na, "SMMA Ribbon Fill")
+
+// Rainbow EMA & SMMA Bar Color
+rbw_trendCol = rbw_bullish ? color.green : rbw_bearish ? color.fuchsia : color.yellow
+plotcandle(open, high, low, close, 
+     title  = "EMA Rainbow Trend", 
+     color  = show_Rainbow_ribbon and show_Rainbow_barCol ? rbw_trendCol : na,
+     wickcolor = show_Rainbow_ribbon and show_Rainbow_barCol ? rbw_trendCol : na, 
+     bordercolor = show_Rainbow_ribbon and show_Rainbow_barCol ? rbw_trendCol : na)
+
+plot(strategy.position_size > 0 ? avg_p : na, "Avg Price", color.yellow, linestyle=plot.linestyle_dotted, linewidth=2)
