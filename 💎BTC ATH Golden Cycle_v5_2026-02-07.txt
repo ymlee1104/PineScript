@@ -15,12 +15,13 @@ inDate      = time >= start_time
 // ⚡ On/Off Switch
 // ============================================
 grp_sw              ='Indicator Switch'
-show_Rainbow_ribbon = input.bool(true, "EMA Rainbow 리본 표시", inline='sw', group=grp_sw)
-show_ichi           = input.bool(false, '일목균형표', inline='sw', group=grp_sw)
+show_Rainbow_ribbon = input.bool(true, "Rainbow Ribbon", inline='sw', group=grp_sw)
+show_Rainbow_barCol = input.bool(true, "Rainbow Bar", inline='sw', group=grp_sw)
+show_ichi           = input.bool(false, '일목균형 Band', inline='sw', group=grp_sw)
 showGMI             = input.bool(false, "Geometric Mean", inline='sw', group=grp_sw)
 sd_enable           = input.bool(true, "Supply and Demand", inline='sw', group=grp_sw)
-show_btc_cycle      = input.bool(true, "BTC 사이클 리듬 활성화", inline='sw', group=grp_sw)
-zigZagOnOff         = input.bool(true, "ZigZag On/Off", inline='sw', group=grp_sw)
+show_btc_cycle      = input.bool(true, "BTC Cycle", inline='sw', group=grp_sw)
+zigZagOnOff         = input.bool(true, "ZigZag", inline='sw', group=grp_sw)
 
 // ============================================
 // ZigZag Line
@@ -38,7 +39,6 @@ ichi_TKlen  = input.int(9, '전환선 기간', minval=1, inline='ic1', group=ich
 ichi_KJlen  = input.int(26, '기준선 기간', minval=1, inline='ic1', group=ichi_grp) 
 ichi_SBlen  = input.int(52, '선행스팬B 기간', minval=1, inline='ic2', group=ichi_grp) 
 ichi_offset = input.int(1, '실행스팬 오프셋', minval=1, inline='ic2', group=ichi_grp) 
-
 
 // ==========================================
 // [BTC 사이클 리듬 분석기
@@ -126,7 +126,6 @@ if show_ichi
     ichi_SB := math.avg(ta.lowest(ichi_SBlen), ta.highest(ichi_SBlen)) 
     ichi_SA := math.avg(ichi_TK, ichi_KJ) 
     ichi_color := ichi_SA > ichi_SB ? color.teal : color.fuchsia
-
 
 // ==========================================
 // 2. Geometric Mean Global Scope
@@ -311,7 +310,6 @@ if inDate
         strategy.exit("Ex4", "L4", limit = sell_p4, comment="Ex4(" + str.tostring(step_rise * 4, "#") + "%)")
         strategy.exit("Ex5", "L5", limit = sell_p5, comment="Ex5(" + str.tostring(step_rise * 5, "#") + "%)")
 
-
 // ==========================================
 // [BTC 사이클 리듬 분석기
 // ==========================================
@@ -369,7 +367,6 @@ if show_btc_cycle
                     border_color=color.new(color.orange, 100), text=btc_status + " 고점 후 하락조정기", text_color=color.white,
                     text_size=size.normal, text_valign=text.align_bottom, text_halign=text.align_left)
 
-
 // ==========================================
 // Rainbow EMA & SMMA Global Scope
 // ==========================================
@@ -378,7 +375,6 @@ float rbw_ema10 = na, float rbw_ema15 = na, float rbw_ema20 = na, float rbw_ema2
 float rbw_ema30 = na, float rbw_ema35 = na, float rbw_ema40 = na, float rbw_ema50 = na
 
 // SMMA 변수
-// float rbw_smma20 = na,
 float rbw_smma50 = na
 
 // 상태 변수
@@ -398,7 +394,6 @@ rbw_smma_func(src, length) =>
 // ==========================================
 // Rainbow EMA & SMMA Logic with Optimization
 // ==========================================
-// EMA Rainbow 계산 (스위치가 켜져 있을 때만 계산)
 if show_Rainbow_ribbon
     rbw_ema10 := ta.ema(close, 10)
     rbw_ema15 := ta.ema(close, 15)
@@ -411,7 +406,6 @@ if show_Rainbow_ribbon
 
 // SMMA 계산 (스위치가 켜져 있을 때만 계산)
 if show_Rainbow_ribbon
-    // rbw_smma20 := rbw_smma_func(close, 20)
     rbw_smma50 := rbw_smma_func(close, 50)
 
 // 트렌드 판별 로직
@@ -422,7 +416,6 @@ rbw_bullish := rbw_ema10 > rbw_ema15 and rbw_ema15 > rbw_ema20 and rbw_ema20 > r
 rbw_bearish := rbw_ema10 < rbw_ema15 and rbw_ema15 < rbw_ema20 and rbw_ema20 < rbw_ema25 and 
                rbw_ema25 < rbw_ema30 and rbw_ema30 < rbw_ema35 and rbw_ema35 < rbw_ema40 and 
                rbw_ema40 < rbw_ema50 and rbw_ema50 < rbw_smma50
-
 
 // ============================================
 // 🎨 VISUALIZATION (시각화 최적화)
@@ -460,20 +453,17 @@ else if has_l5
 
 // 시각화 조건: 포지션이 있고, 마지막 매도 시점 이후부터만 표시
 show_sell_line = strategy.position_size > 0 and bar_index >= last_sell_bar
+next_buy = not has_l1 ? buy_p1 : not has_l2 ? buy_p2 : not has_l3 ? buy_p3 : not has_l4 ? buy_p4 : not has_l5 ? buy_p5 : na
+bool isBuyTriggered = not na(next_buy) and (low <= next_buy)
+bool isSellTriggered = not na(current_sell_target) and (high >= current_sell_target)
 
 plot(ath, "ATH", color.new(color.gray, 30), style=plot.style_stepline, linewidth=1)
-// 다음 매수 라인
-next_buy = not has_l1 ? buy_p1 : not has_l2 ? buy_p2 : not has_l3 ? buy_p3 : not has_l4 ? buy_p4 : not has_l5 ? buy_p5 : na
-plot(next_buy, "Next Buy", color.new(color.green, 0), style=plot.style_linebr, linewidth=1)
-// 다음 매도 라인 (수정된 로직)
-plot(show_sell_line ? current_sell_target : na, "Next Sell", color.new(color.orange, 0), style=plot.style_linebr, linewidth=1)
-plot(strategy.position_size > 0 ? avg_p : na, "Avg Price", color.yellow, linestyle=plot.linestyle_dotted, linewidth=1)
-
+plot(show_btc_cycle ? next_buy : na, "Next Buy", color.new(#00ffea, 0), style=plot.style_line, linewidth=2)
+plot(show_btc_cycle and show_sell_line ? current_sell_target : na, "Next Sell", color.new(color.orange, 0), linestyle=plot.linestyle_dotted, linewidth=1)
 
 // ==========================================
 // Rainbow EMA & SMMA Visualization
 // ==========================================
-// EMA Plots
 p10 = plot(show_Rainbow_ribbon ? rbw_ema10 : na, color = color.fuchsia, title = 'EMA 10', editable=false)
 plot(show_Rainbow_ribbon ? rbw_ema15 : na, color = color.purple, title = 'EMA 15', editable=false)
 plot(show_Rainbow_ribbon ? rbw_ema20 : na, color = color.navy, title = 'EMA 20', editable=false)
@@ -490,26 +480,15 @@ fill(p10, p50, rbw_ema10, rbw_ema50, show_Rainbow_ribbon ? rbw_fill_col_10 : na,
 
 // Rainbow EMA & SMMA Plots
 rbw_trendSmmaCol = rbw_ema50 > rbw_smma50 ? color.green : color.red
-// psmma50 = plot(show_Rainbow_ribbon ? rbw_smma20 : na, color=color.new(rbw_trendSmmaCol, 0), linewidth=1, title = 'SMMA 50')
 psmma50 = plot(show_Rainbow_ribbon ? rbw_smma50 : na, color=color.new(rbw_trendSmmaCol, 0), linewidth=4, title = 'SMMA 50')
 fill(p50, psmma50, rbw_ema50, rbw_smma50, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 90) : na, show_Rainbow_ribbon ? color.new(rbw_trendSmmaCol, 10) : na, "SMMA Ribbon Fill")
 
 // Rainbow EMA & SMMA Bar Color
 rbw_trendCol = rbw_bullish ? color.green : rbw_bearish ? color.fuchsia : color.yellow
-// barcolor(show_Rainbow_ribbon ? rbw_trendCol : na)
-
 plotcandle(open, high, low, close, 
      title  = "EMA Rainbow Trend", 
-     color  = show_Rainbow_ribbon ? rbw_trendCol : na,
-     wickcolor = show_Rainbow_ribbon ? rbw_trendCol : na, 
-     bordercolor = show_Rainbow_ribbon ? rbw_trendCol : na)
+     color  = show_Rainbow_ribbon and show_Rainbow_barCol ? rbw_trendCol : na,
+     wickcolor = show_Rainbow_ribbon and show_Rainbow_barCol ? rbw_trendCol : na, 
+     bordercolor = show_Rainbow_ribbon and show_Rainbow_barCol ? rbw_trendCol : na)
 
-// Rainbow EMA & SMMA Signals & Alerts
-bool rbw_isLong  = rbw_bullish and not rbw_bullish[1]
-bool rbw_isShort = rbw_bearish and not rbw_bearish[1]
-
-alertcondition(ta.crossover(rbw_ema50, rbw_smma50), title = 'Golden Cross Alert', message = 'SMMA 50 crossed above SMMA 50 (Bullish)')
-alertcondition(ta.crossunder(rbw_ema50, rbw_smma50), title = 'Death Cross Alert', message = 'SMMA 50 crossed below SMMA 50 (Bearish)')
-alertcondition(rbw_bullish, title = 'Bullish Zone Alert', message = 'All EMAs aligned bullish + SMMA trend up')
-alertcondition(rbw_bearish, title = 'Bearish Zone Alert', message = 'All EMAs aligned bearish + SMMA trend down')
-
+plot(strategy.position_size > 0 ? avg_p : na, "Avg Price", color.yellow, linestyle=plot.linestyle_dotted, linewidth=2)
