@@ -66,7 +66,7 @@ btc_cycle_down_len      = input.int(365, "하락주기", inline='bc', group=grp_
 // ============================================
 grp_logic = "BTC ATH Golden Cycle Inputs"
 max_drop_pct = input.float(77.0, "하락률", minval=1.0, step=1.0, inline='ath', group=grp_logic)
-max_rise_pct = input.float(510.0, "상승률", minval=10.0, step=1.0, inline='ath', group=grp_logic)
+max_rise_pct = input.float(507.0, "상승률", minval=10.0, step=1.0, inline='ath', group=grp_logic)
 weight_val   = input.float(1.9, "가중률", minval=0.1, step=0.1, inline='ath', group=grp_logic)
 
 // ==========================================
@@ -86,6 +86,21 @@ sd_col_sup  = input.color(color.orange, "Supply", inline='sd', group=grp_sd)
 sd_col_dem  = input.color(#009fd4, "Demand", inline='sd', group=grp_sd)
 sd_transp   = input.int(75, "투명BG", minval = 1, maxval = 100, inline='sd', group=grp_sd)
 bd_transp   = input.int(55, "투명BD", minval = 1, maxval = 100, inline='sd', group=grp_sd)
+
+// ============================================
+// BTC Mining Difficulty
+// ============================================
+// BTC Mining Difficulty input
+dif_pow = input.float(0.51, title = 'Power', step = 0.01, inline='dif', group='BTC Mining Difficulty')
+dif_mul = input.float(0.002, title = 'Multiplier', step = 0.0001, inline='dif', group='BTC Mining Difficulty')
+
+// BTC Mining Difficulty Get the data
+qu_difficulty = 'QUANDL:BCHAIN/DIFF'
+difficulty = request.security(qu_difficulty, 'D', close[0])
+
+dif_out1 = ta.sma(math.pow(difficulty, dif_pow) * dif_mul, 1)
+plot(dif_out1, title = 'Difficulty Model', color = color.new(color.orange, 0), linewidth = 2)
+
 
 // ============================================
 // ZigZag Line Global Scope
