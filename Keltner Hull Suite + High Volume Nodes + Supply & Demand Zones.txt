@@ -27,7 +27,7 @@ pUpper = plot(isCloud ? upperBand : na, "Upper Band", color.new(trendCol, 60))
 pLower = plot(isCloud ? lowerBand : na, "Lower Band", color.new(trendCol, 60))
 fill(pUpper, pLower, isCloud ? color.new(trendCol, 85) : na)
 plot(isCloud or visualMode == "LineOnly" ? trend_Line : na, "Trend Line", trendCol, 4)
-plotcandle(open, high, low, close, color=trendCol, wickcolor=trendCol, bordercolor=trendCol, force_overlay=true)
+// plotcandle(open, high, low, close, color=trendCol, wickcolor=trendCol, bordercolor=trendCol, force_overlay=true)
 
 
 // ==========================================
