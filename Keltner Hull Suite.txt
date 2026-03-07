@@ -1,0 +1,244 @@
+//@version=6
+// [수정] max_boxes_count와 max_labels_count를 늘려 박스가 중간에 삭제되지 않도록 방지
+indicator(title = 'Keltner Hull Suite', overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+//───────────────────────────────
+// Volume Weighted Bands Inputs
+//───────────────────────────────
+gp_vwb      = "Volume Weighted Bands"
+visualMode  = input.string("LineOnly", "Mode", options = ["Cloud", "LineOnly"], inline='vwb', group=gp_vwb)
+vwb_len     = input.int(24, "Trend", inline='vwb', group=gp_vwb)
+smoothLen   = input.int(14, "Extra 평활", inline='vwb', group=gp_vwb)
+bandMult    = input.float(1.0, "Band Width (ATR Multiplier)", step = 0.1, inline='vwb', group=gp_vwb)
+atrLen      = input.int(14, "ATR Length", inline='vwb', group=gp_vwb)
+
+//───────────────────────────────
+// Volume Weighted Bands Calculation
+//───────────────────────────────
+float trend_Line = ta.ema((ta.vwma(close, vwb_len) + ta.ema(close, vwb_len)) / 2, smoothLen)
+float atr        = ta.atr(atrLen)
+float upperBand  = trend_Line + atr * bandMult
+float lowerBand  = trend_Line - atr * bandMult
+
+//───────────────────────────────
+// Volume Weighted Bands Trend Detection & Colors
+//───────────────────────────────
+var int trend_State = 0
+trend_State := close > upperBand ? 1 : close < lowerBand ? -1 : trend_State
+color bull = color.rgb(92, 240, 215), color bear = color.rgb(179, 42, 195), color neutral = color.new(color.gray, 80)
+color trendCol = trend_State == 1 ? bull : trend_State == -1 ? bear : neutral
+
+//───────────────────────────────
+// Volume Weighted Bands Plot Logic
+//───────────────────────────────
+bool isCloud  = visualMode == "Cloud"
+pUpper = plot(isCloud ? upperBand : na, "Upper Band", color.new(trendCol, 60))
+pLower = plot(isCloud ? lowerBand : na, "Lower Band", color.new(trendCol, 60))
+fill(pUpper, pLower, isCloud ? color.new(trendCol, 85) : na)
+plot(isCloud or visualMode == "LineOnly" ? trend_Line : na, "Trend Line", trendCol, 4)
+plotcandle(open, high, low, close, color=trendCol, wickcolor=trendCol, bordercolor=trendCol, force_overlay=true)
+
+
+// ==========================================
+// Keltner Hull Suite (USER-DEFINED SETTINGS)
+// ==========================================
+
+var string hull_settings = '════════ Hull 설정 ════════'
+var string visual_settings = '════════ 시각화 설정 ════════'
+
+tooltip_hull_period        = 'Hull 이동평균(HMA) 계산에 사용되는 캔들 수입니다.\n낮은 값(8-12): 반응성이 좋아 추세 변화에 빠르게 대응하지만, 횡보장에서 속임수 신호가 많을 수 있습니다.\n높은 값(16-21): 노이즈가 줄어들어 안정적인 추세 식별이 가능하지만, 실제 추세 전환보다 반응이 느릴 수 있습니다.'
+tooltip_keltner_period     = '켈트너 채널 계산을 위한 룩백 기간입니다. 변동성 측정 범위를 결정합니다.\n낮은 값(14-18): 최근 변동성에 빠르게 적응합니다.\n높은 값(21-30): 단기 파동을 걸러내어 더 안정적인 밴드를 생성합니다.'
+tooltip_keltner_multiplier = '동적 지지/저항 밴드를 생성하기 위해 적용되는 승수입니다.\n낮은 값(1.0-1.5): 밴드가 좁아져 신호가 빈번하게 발생하지만 가짜 돌파 위험이 큽니다.\n높은 값(2.5-3.0): 밴드가 넓어져 추세 지속성이 강해지고 속임수가 줄어들지만 진입이 늦어질 수 있습니다.'
+tooltip_price_source       = '모든 계산에 사용되는 가격 데이터 소스입니다.\nClose: 종가 기준(가장 일반적).\nHL2/HLC3: 고가/저가 평균을 사용하여 꼬리의 영향을 줄이고 추세를 부드럽게 만듭니다.'
+tooltip_preset             = '다양한 매매 스타일과 시장 조건에 최적화된 사전 설정 구성을 선택합니다.'
+tooltip_preset_details     = 'Default (14, 20, 2.0): 스윙 트레이딩 및 일봉 분석에 적합한 균형 잡힌 설정.\nFast Response (10, 14, 1.5): 스캘핑 및 데이 트레이딩을 위한 공격적인 설정.\nSmooth Trend (18, 30, 2.5): 노이즈를 최소화한 보수적인 추세 추종 설정.'
+tooltip_bar_coloring       = '현재 추세 방향에 따라 차트의 캔들 색상을 변경할지 여부를 선택합니다.'
+tooltip_color_preset       = '차트 테마에 최적화된 사전 정의된 색상 조합을 선택합니다.'
+
+priceSource       = input.source(close, '', inline='kelt', group = hull_settings, tooltip = tooltip_price_source)
+presetConfig      = input.string('Default', '프리셋 구성', options=['Default', 'Fast Response', 'Smooth Trend'], inline='kelt', group = hull_settings, tooltip = tooltip_preset + '\n\n' + tooltip_preset_details)
+hullPeriod        = input.int(14, 'Hull MA 기간', inline='kelt', group = hull_settings, tooltip = tooltip_hull_period)
+keltnerPeriod     = input.int(20, 'Keltner 기간', inline='kelt', group = hull_settings, tooltip = tooltip_keltner_period)
+keltnerMultiplier = input.float(2.0, 'Keltner 승수', step = 0.1, inline='kelt', group = hull_settings, tooltip = tooltip_keltner_multiplier)
+
+if presetConfig == 'Fast Response'
+    hullPeriod        := 10
+    keltnerPeriod     := 14
+    keltnerMultiplier := 1.5
+else if presetConfig == 'Smooth Trend'
+    hullPeriod        := 18
+    keltnerPeriod     := 30
+    keltnerMultiplier := 2.5
+
+enableBarColoring = input.bool(true, '캔들색상', inline='kelt', group = visual_settings, tooltip = tooltip_bar_coloring)
+colorPreset       = input.string('Custom', '색상', options=['Classic', 'Aqua', 'Cosmic', 'Ember', 'Neon', 'Custom'], inline='kelt', group = visual_settings, tooltip = tooltip_color_preset)
+bullishColorInput = input.color(#00ffaa, '상승추세', inline='kelt', group = visual_settings)
+bearishColorInput = input.color(#ff0000, '하락추세', inline='kelt', group = visual_settings)
+lineTransparency  = input.int(30, '라인 투명도', minval = 0, maxval = 100, step = 5, inline='kelt', group = visual_settings)
+fillTransparency  = input.int(60, '배경 투명도', minval = 0, maxval = 100, step = 5, inline='kelt', group = visual_settings)
+
+[bullishColor, bearishColor] = switch colorPreset
+    'Classic' => [#00ff00, #ff0000]
+    'Aqua'    => [#00bfff, #ff8c00]
+    'Cosmic'  => [#49ffce, #9932cc]
+    'Ember'   => [#ff6600, #00cccc]
+    'Neon'    => [#ffff00, #ff00ff]
+    'Custom'  => [bullishColorInput, bearishColorInput]
+
+// ==========================================
+// Keltner Hull Suite (CORE CALCULATION)
+// ==========================================
+hullMA       = ta.hma(priceSource, hullPeriod)
+tr           = ta.tr(true)
+smoothTR     = ta.ema(tr, keltnerPeriod)
+doubleSmooth = ta.ema(smoothTR, keltnerPeriod) 
+deviation    = doubleSmooth * keltnerMultiplier
+
+upperBound = hullMA + deviation
+lowerBound = hullMA - deviation
+
+var float trendLine = hullMA
+trendLine := nz(trendLine[1], hullMA)
+
+if upperBound < trendLine
+    trendLine := upperBound
+
+if lowerBound > trendLine
+    trendLine := lowerBound
+
+trendUp   = trendLine > trendLine[1]
+trendDown = trendLine < trendLine[1]
+
+var color currentTrend = bullishColor
+var int trendState = 0 
+
+if trendUp
+    currentTrend := bullishColor
+    trendState   := 1
+else if trendDown
+    currentTrend := bearishColor
+    trendState   := -1
+
+bool isLong  = trendState == 1 and trendState[1] != 1
+bool isShort = trendState == -1 and trendState[1] != -1
+
+// ==========================================
+// Keltner Hull Suite (VISUALIZATION)
+// ==========================================
+mainTrendLine    = trendLine
+shiftedTrendLine = trendLine[2]
+
+lineColor = color.new(currentTrend, lineTransparency)
+fillColor = color.new(currentTrend, fillTransparency)
+
+mainPlot    = plot(mainTrendLine, title = '메인 추세선', color = lineColor, linewidth = 1)
+shiftedPlot = plot(shiftedTrendLine, title = '이동 추세선', color = lineColor, linewidth = 4)
+fill(mainPlot, shiftedPlot, title = '추세 밴드 배경', color = fillColor)
+
+barColor = enableBarColoring ? currentTrend : na
+barcolor(barColor, title = '추세 기반 캔들 색상')
+
+// ==========================================
+// Keltner Hull Suite (ALERTS)
+// ==========================================
+alertcondition(isLong, title = '롱(상승) 전환 신호', message = 'Keltner Hull Suite: 상승 추세 전환 [{{exchange}}:{{ticker}}]')
+alertcondition(isShort, title = '숏(하락) 전환 신호', message = 'Keltner Hull Suite: 하락 추세 전환 [{{exchange}}:{{ticker}}]')
+
+
+// ==========================================
+// 1. High Volume Nodes (HVN) 설정 (Inputs)
+// ==========================================
+grp_hvn = 'High Volume Nodes (HVN)'
+bool hvn_enable       = input.bool(true, "HVN 지표 활성화", group=grp_hvn)
+bool hvn_showOnlyMax  = input.bool(true, "가장 긴 HVN만 표시", inline='hvn', group=grp_hvn)
+int  hvn_numSlices    = input.int(100, "슬라이스 수 (Slices)", minval = 1, maxval = 200, inline='hvn', group=grp_hvn)
+int  hvn_lookbackBars = input.int(200, "룩백 캔들 (Bars)", minval = 10, inline='hvn', group=grp_hvn)
+
+// ==========================================
+// 2. 전역 변수 및 시그널 스코프 선언
+// ==========================================
+float hvn_pocPrice = na   
+bool  hvn_isLong   = false 
+bool  hvn_isShort  = false 
+
+var box[] hvn_Boxes = array.new_box()
+var label[] hvn_Labels = array.new_label()
+
+// ==========================================
+// 3. 핵심 계산 로직 (Core Logic)
+// ==========================================
+if hvn_enable
+    
+    // 부하를 줄이기 위해 마지막 캔들에서만 모든 연산 수행
+    if barstate.islast
+        int hvn_actualLookback = math.min(hvn_lookbackBars, bar_index + 1)
+        
+        // [수정] ta.highest/lowest 버퍼 충돌을 막기 위해 
+        // 루프 안에서 직접 룩백 기간 동안의 고점과 저점을 정확하게 탐색합니다.
+        float hvn_hi = high[0]
+        float hvn_lo = low[0]
+        
+        for i = 1 to hvn_actualLookback - 1
+            if not na(high[i]) and high[i] > hvn_hi
+                hvn_hi := high[i]
+            if not na(low[i]) and low[i] < hvn_lo
+                hvn_lo := low[i]
+        
+        if hvn_hi > hvn_lo 
+            float hvn_priceStep = (hvn_hi - hvn_lo) / hvn_numSlices
+            
+            if array.size(hvn_Boxes) > 0
+                for b in hvn_Boxes
+                    box.delete(b)
+                array.clear(hvn_Boxes)
+            if array.size(hvn_Labels) > 0
+                for l in hvn_Labels
+                    label.delete(l)
+                array.clear(hvn_Labels)
+            
+            float[] hvn_volumes = array.new_float(hvn_numSlices, 0.0)
+            
+            for i = 0 to hvn_actualLookback - 1
+                float currHigh = high[i]
+                float currLow  = low[i]
+                float currVol  = nz(volume[i]) > 0 ? volume[i] : 1.0
+                
+                if na(currHigh) or na(currLow)
+                    continue
+                    
+                for j = 0 to hvn_numSlices - 1
+                    float sliceLow = hvn_lo + (j * hvn_priceStep)
+                    float sliceHigh = sliceLow + hvn_priceStep
+                    
+                    if currLow <= sliceHigh and currHigh >= sliceLow
+                        array.set(hvn_volumes, j, array.get(hvn_volumes, j) + currVol)
+
+            float hvn_maxVol = array.max(hvn_volumes)
+            int hvn_maxVolIndex = array.indexof(hvn_volumes, hvn_maxVol)
+            
+            if hvn_maxVolIndex >= 0
+                hvn_pocPrice := hvn_lo + (hvn_maxVolIndex * hvn_priceStep) + (hvn_priceStep / 2)
+            
+            int hvn_leftBase = bar_index - hvn_actualLookback + 1
+            int hvn_left = math.max(0, hvn_leftBase) 
+
+            for j = 0 to hvn_numSlices - 1
+                float vol = array.get(hvn_volumes, j)
+         
+                if vol > 0 and hvn_maxVol > 0
+                    float sliceLow = hvn_lo + (j * hvn_priceStep)
+                    float sliceHigh = sliceLow + hvn_priceStep
+                    
+                    int boxWidth = int((vol / hvn_maxVol) * (hvn_actualLookback * 0.99)) 
+                    int hvn_right = hvn_left + math.max(1, boxWidth) 
+                    
+                    box b = box.new(hvn_left, sliceHigh, hvn_right, sliceLow, border_color = color.new(#2196f3, 50), bgcolor = color.new(#00bcd4, 85))
+                    array.push(hvn_Boxes, b)
+                    
+                    float pctOfMax = (vol / hvn_maxVol) * 100
+             
+                    if pctOfMax >= 10 
+                        bool shouldShow = not hvn_showOnlyMax or (vol == hvn_maxVol)
+                        if shouldShow
+                            label lbl = label.new(hvn_right, (sliceHigh + sliceLow) / 2, text = str.tostring(sliceLow, "#,###.#"), style = label.style_none, textcolor = color.white, size = size.normal)
+                            array.push(hvn_Labels, lbl)
